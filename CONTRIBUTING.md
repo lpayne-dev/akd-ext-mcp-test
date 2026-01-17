@@ -68,6 +68,31 @@ class MyTool(BaseTool[MyInputSchema, MyOutputSchema]):
         return MyOutputSchema(result=params.query)
 ```
 
+### Tool Attributes (Auto-generated)
+
+Each tool has these auto-generated attributes:
+- `.name` - Derived from class name (e.g., `"MyTool"`)
+- `.description` - Generated from class docstring + input/output schema field names and descriptions
+
+### Tool Configuration
+
+Customize tools via `BaseToolConfig`:
+
+```python
+from akd.tools import BaseToolConfig
+
+# Override name
+tool = MyTool(config=BaseToolConfig(name="custom_name"))
+
+# Create custom config class for additional options
+class MyToolConfig(BaseToolConfig):
+    custom_option: str = "default_value"
+
+tool = MyTool(config=MyToolConfig(name="custom", custom_option="foo"))
+```
+
+See `akd_ext/tools/dummy.py` for a complete reference implementation.
+
 ## Code Style
 
 - **Python 3.12+ is strictly required**
