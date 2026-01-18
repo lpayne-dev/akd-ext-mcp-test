@@ -135,7 +135,7 @@ wheels = [
 [[package]]
 name = "akd"
 version = "0.1.0"
-source = { git = "https://github.com/NASA-IMPACT/accelerated-discovery.git?rev=develop#60fea7849e228300140bf46d351556fec45ebcde" }
+source = { git = "https://github.com/NASA-IMPACT/accelerated-discovery.git?rev=develop#17da5ee354790214e4289841936cae029d06edc7" }
 dependencies = [
     { name = "crawl4ai" },
     { name = "dateparser" },
