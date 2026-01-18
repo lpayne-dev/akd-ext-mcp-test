@@ -1,3 +1,5 @@
 """Agents module for akd_ext."""
 
-__all__ = []
+from akd_ext.agents._base import OpenAIBaseAgent, OpenAIBaseAgentConfig
+
+__all__ = ["OpenAIBaseAgent", "OpenAIBaseAgentConfig"]

@@ -1,0 +1,174 @@
+from __future__ import annotations
+
+from typing import Any
+
+from agents import Agent, ModelSettings, RunConfig, Runner, trace
+from openai.types.shared.reasoning import Reasoning
+from pydantic import Field, computed_field
+
+from akd._base import InputSchema, OutputSchema
+from akd.agents._base import BaseAgent, BaseAgentConfig
+
+
+class OpenAIBaseAgentConfig(BaseAgentConfig):
+    """Configuration for OpenAI Agents SDK based AKD Agents.
+
+    Extends BaseAgentConfig with OpenAI-specific settings for agents
+    built with OpenAI's platform agent builder.
+
+    Inherits `reasoning_effort` and `reasoning_summary` from BaseAgentConfig.
+    Defaults to `stateless=False` (stateful) for multi-turn conversations.
+    """
+
+    stateless: bool = Field(
+        default=False,
+        description="Whether to maintain conversation history. False = stateful (default for OpenAI agents).",
+    )
+    tools: list[Any] = Field(
+        default_factory=list,
+        description="Tools for the agent (FunctionTool, HostedMCPTool, WebSearchTool, etc.)",
+    )
+    tracing_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Parameters for OpenAI Agents SDK traceability (trace_name, workflow_id, etc.)",
+    )
+
+    # Additional ModelSettings parameters
+    top_p: float | None = Field(default=None, description="Nucleus sampling parameter.")
+    frequency_penalty: float | None = Field(default=None, description="Frequency penalty for token repetition.")
+    presence_penalty: float | None = Field(default=None, description="Presence penalty for new topics.")
+
+    @computed_field
+    def model_settings(self) -> ModelSettings:
+        """ModelSettings built from config values."""
+        reasoning = None
+        if self.reasoning_effort:
+            reasoning = Reasoning(
+                effort=self.reasoning_effort,
+                summary=self.reasoning_summary or "auto",
+            )
+        return ModelSettings(
+            store=True,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            top_p=self.top_p,
+            frequency_penalty=self.frequency_penalty,
+            presence_penalty=self.presence_penalty,
+            reasoning=reasoning,
+        )
+
+    @computed_field
+    def run_config(self) -> RunConfig:
+        """RunConfig with tracing parameters."""
+        return RunConfig(trace_metadata=self.tracing_params or {})
+
+
+# Resolve forward references from agents SDK
+OpenAIBaseAgentConfig.model_rebuild()
+
+
+class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent):
+    """Base class for OpenAI Agents SDK based agents.
+
+    Provides:
+    - Agent created in __init__ via `_create_agent()`
+    - Memory via `memory` property (list[dict] - consistent with akd-core)
+    - Stateful by default, clears memory each run if stateless=True
+
+    Subclasses must define:
+    - `input_schema`: Input schema class
+    - `output_schema`: Output schema class
+
+    Subclasses can override:
+    - `_create_agent()`: For custom agent creation logic
+    - `_arun()`: For complex multi-agent workflows
+    """
+
+    # Placeholders - subclasses must override
+    input_schema = InputSchema
+    output_schema = OutputSchema
+    config_schema = OpenAIBaseAgentConfig
+
+    def __init__(
+        self,
+        config: OpenAIBaseAgentConfig | None = None,
+        debug: bool = False,
+    ) -> None:
+        super().__init__(config=config, debug=debug)
+        self._memory: list[dict[str, Any]] = []
+        self._agent = self._create_agent()
+
+    @property
+    def memory(self) -> list[dict[str, Any]]:
+        """Conversation history for multi-turn interactions."""
+        return self._memory
+
+    def reset_memory(self) -> None:
+        """Clear conversation history."""
+        self._memory.clear()
+
+    def _create_agent(self) -> Agent:
+        """Create the OpenAI Agent object.
+
+        Uses tools and model settings from config.
+        Override for custom agent creation logic.
+        """
+        return Agent(
+            name=self.__class__.__name__,
+            instructions=self.config.system_prompt,
+            model=self.config.model_name or "gpt-4o",
+            tools=self.config.tools,
+            output_type=self.output_schema,
+            model_settings=self.config.model_settings,
+        )
+
+    async def get_response_async(
+        self,
+        input: list[dict[str, Any]] | str | None = None,
+        **kwargs,
+    ) -> Any:
+        """Run the agent with given input and return the RunResult.
+
+        Args:
+            input: Conversation input. If None, uses internal memory.
+                   Can be a string (converted to user message) or list of dicts.
+
+        Returns:
+            RunResult from Runner.run() for full access to outputs.
+        """
+        if input is None:
+            agent_input = self._memory
+        elif isinstance(input, str):
+            agent_input = [{"role": "user", "content": input}]
+        else:
+            agent_input = input
+
+        with trace(self.__class__.__name__):
+            return await Runner.run(
+                self._agent,
+                input=agent_input,
+                run_config=self.config.run_config,
+            )
+
+    async def _arun(self, params: InSchema, **kwargs) -> OutSchema:
+        """Run the agent workflow.
+
+        Handles memory management, runs the agent, and returns typed output.
+        Override this for complex multi-agent workflows.
+        """
+        if self.config.stateless:
+            self.reset_memory()
+
+        self._memory.append({"role": "user", "content": params.model_dump_json()})
+
+        result = await self.get_response_async(input=self._memory)
+
+        self._memory = result.to_input_list()
+
+        final_output = result.final_output
+        if isinstance(final_output, self.output_schema):
+            return final_output
+        elif hasattr(final_output, "model_dump"):
+            return self.output_schema(**final_output.model_dump())
+        else:
+            return self.output_schema.model_validate_json(str(final_output))
