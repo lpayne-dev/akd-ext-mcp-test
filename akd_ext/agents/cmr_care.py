@@ -12,6 +12,7 @@ import os
 from typing import Any, Literal
 
 from agents import Agent, HostedMCPTool, ModelSettings, Runner
+from loguru import logger
 from openai.types.shared.reasoning import Reasoning
 from pydantic import Field
 
@@ -516,6 +517,9 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
         if self.config.stateless:
             self.reset_memory()
 
+        if self.debug:
+            logger.debug(f"CMRCareAgent: Starting search with query: {params.query}")
+
         # Step 1: Run search agent
         self._memory.append({"role": "user", "content": params.query})
         search_result = await Runner.run(
@@ -527,6 +531,10 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
         # Update memory with search conversation
         self._memory = search_result.to_input_list()
 
+        if self.debug:
+            search_output = search_result.final_output
+            logger.debug(f"CMRCareAgent: Search agent output:\n{search_output}")
+
         # Step 2: Run output agent to structure results
         output_result = await Runner.run(
             self._output_agent,
@@ -535,6 +543,10 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
         )
 
         final_output = output_result.final_output
+
+        if self.debug:
+            logger.debug(f"CMRCareAgent: Output agent result: {final_output}")
+
         if isinstance(final_output, CMRCareOutput):
             return final_output
         elif hasattr(final_output, "model_dump"):
