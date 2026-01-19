@@ -8,9 +8,11 @@ def pytest_addoption(parser):
     parser.addoption(
         "--reasoning-effort",
         action="store",
-        default="medium",
+        default=None,
+        nargs="?",
+        const="medium",
         choices=["low", "medium", "high"],
-        help="Reasoning effort level for CMR agent tests (default: medium)",
+        help="Reasoning effort level (omit flag for None, use flag alone for medium)",
     )
 
 

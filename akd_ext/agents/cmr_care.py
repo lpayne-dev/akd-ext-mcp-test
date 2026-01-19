@@ -12,6 +12,7 @@ import os
 from typing import Any, Literal
 
 from agents import Agent, HostedMCPTool, ModelSettings
+from loguru import logger
 from openai.types.shared.reasoning import Reasoning
 from pydantic import Field
 
@@ -441,7 +442,7 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
 
     system_prompt: str = Field(default=CMR_CARE_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
-    reasoning_effort: Literal["low", "medium", "high"] = Field(default="medium")
+    reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
     tools: list[Any] = Field(default_factory=_default_cmr_tools)
 
 
@@ -565,7 +566,9 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
 
         # Stage 1: Run search agent (free-form)
         search_input = CMRSearchAgentInputSchema(query=params.query)
-        await self._search_agent.arun(search_input)
+        search_result = await self._search_agent.arun(search_input)
+        if self.debug:
+            logger.debug("Search agent freeform response: {}", search_result.response)
 
         # Stage 2: Run output agent with FULL search conversation history
         # This includes: user query + tool calls + search agent responses
