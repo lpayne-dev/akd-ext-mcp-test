@@ -18,6 +18,7 @@ from pydantic import Field
 from akd._base import InputSchema, OutputSchema
 from akd_ext.agents._base import (
     FreeFormOpenAIBaseAgent,
+    FreeFormOutput,
     OpenAIBaseAgent,
     OpenAIBaseAgentConfig,
 )
@@ -494,6 +495,22 @@ class CMRSearchAgent(FreeFormOpenAIBaseAgent[CMRSearchInput]):
             model_settings=self.config.model_settings,
             # No output_type - free-form output
         )
+
+    async def _arun(self, params: CMRSearchInput, **kwargs) -> FreeFormOutput:
+        """Run search with raw query text (matches Sanjog's original).
+
+        Overrides parent to pass raw query text instead of JSON.
+        """
+        if self.config.stateless:
+            self.reset_memory()
+
+        # Pass raw query text, not JSON - matches original semantics
+        self._memory.append({"role": "user", "content": params.query})
+        result = await self.get_response_async(messages=self._memory)
+        self._memory = result.to_input_list()
+
+        response_text = str(result.final_output)
+        return FreeFormOutput(response=response_text)
 
 
 # -----------------------------------------------------------------------------
