@@ -450,20 +450,20 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
 # -----------------------------------------------------------------------------
 
 
-class CMRSearchInput(InputSchema):
-    """Input for CMR Search Agent."""
+class CMRSearchAgentInputSchema(InputSchema):
+    """Input schema for CMR Search Agent."""
 
     query: str = Field(..., description="Earth science query for dataset discovery")
 
 
-class CMRCareInput(InputSchema):
-    """Input for CMR CARE Agent."""
+class CMRCareAgentInputSchema(InputSchema):
+    """Input schema for CMR CARE Agent."""
 
     query: str = Field(..., description="Earth science query for dataset discovery")
 
 
-class CMRCareOutput(OutputSchema):
-    """Output from CMR CARE Agent."""
+class CMRCareAgentOutputSchema(OutputSchema):
+    """Output schema for CMR CARE Agent."""
 
     __response_field__ = "report"
     dataset_concept_ids: list[str] = Field(..., description="List of dataset concept IDs")
@@ -475,14 +475,14 @@ class CMRCareOutput(OutputSchema):
 # -----------------------------------------------------------------------------
 
 
-class CMRSearchAgent(FreeFormOpenAIBaseAgent[CMRSearchInput]):
+class CMRSearchAgent(FreeFormOpenAIBaseAgent[CMRSearchAgentInputSchema]):
     """CMR Search Agent - free-form search using CARE methodology.
 
     Internal helper for CMRCareAgent pipeline.
     Returns FreeFormOutput with unstructured search results.
     """
 
-    input_schema = CMRSearchInput
+    input_schema = CMRSearchAgentInputSchema
     config_schema = CMRCareConfig
 
     def _create_agent(self) -> Agent:
@@ -496,7 +496,7 @@ class CMRSearchAgent(FreeFormOpenAIBaseAgent[CMRSearchInput]):
             # No output_type - free-form output
         )
 
-    async def _arun(self, params: CMRSearchInput, **kwargs) -> FreeFormOutput:
+    async def _arun(self, params: CMRSearchAgentInputSchema, **kwargs) -> FreeFormOutput:
         """Run search with raw query text (matches Sanjog's original).
 
         Overrides parent to pass raw query text instead of JSON.
@@ -518,16 +518,16 @@ class CMRSearchAgent(FreeFormOpenAIBaseAgent[CMRSearchInput]):
 # -----------------------------------------------------------------------------
 
 
-class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
+class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSchema]):
     """CMR CARE Agent for NASA dataset discovery.
 
     Composition pattern:
     - self._search_agent: CMRSearchAgent (free-form output)
-    - self._agent: Output agent (structured CMRCareOutput)
+    - self._agent: Output agent (structured CMRCareAgentOutputSchema)
     """
 
-    input_schema = CMRCareInput
-    output_schema = CMRCareOutput
+    input_schema = CMRCareAgentInputSchema
+    output_schema = CMRCareAgentOutputSchema
     config_schema = CMRCareConfig
 
     def __init__(
@@ -545,14 +545,14 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
             name="CMROutputAgent",
             instructions=OUTPUT_AGENT_PROMPT,
             model="gpt-5.2",
-            output_type=CMRCareOutput,
+            output_type=CMRCareAgentOutputSchema,
             model_settings=ModelSettings(
                 store=True,
                 reasoning=Reasoning(effort="low", summary="auto"),
             ),
         )
 
-    async def _arun(self, params: CMRCareInput, **kwargs) -> CMRCareOutput:
+    async def _arun(self, params: CMRCareAgentInputSchema, **kwargs) -> CMRCareAgentOutputSchema:
         """Orchestrate search -> output pipeline.
 
         Matches Sanjog's original flow:
@@ -564,7 +564,7 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
             self._search_agent.reset_memory()
 
         # Stage 1: Run search agent (free-form)
-        search_input = CMRSearchInput(query=params.query)
+        search_input = CMRSearchAgentInputSchema(query=params.query)
         await self._search_agent.arun(search_input)
 
         # Stage 2: Run output agent with FULL search conversation history

@@ -3,16 +3,16 @@
 from akd_ext.agents._base import OpenAIBaseAgent, OpenAIBaseAgentConfig
 from akd_ext.agents.cmr_care import (
     CMRCareAgent,
+    CMRCareAgentInputSchema,
+    CMRCareAgentOutputSchema,
     CMRCareConfig,
-    CMRCareInput,
-    CMRCareOutput,
 )
 
 __all__ = [
     "OpenAIBaseAgent",
     "OpenAIBaseAgentConfig",
     "CMRCareAgent",
+    "CMRCareAgentInputSchema",
+    "CMRCareAgentOutputSchema",
     "CMRCareConfig",
-    "CMRCareInput",
-    "CMRCareOutput",
 ]

@@ -5,7 +5,12 @@ Co-Authored-By: Sanjog Thapa <sanzog03@gmail.com>
 
 import pytest
 
-from akd_ext.agents import CMRCareAgent, CMRCareConfig, CMRCareInput, CMRCareOutput
+from akd_ext.agents import (
+    CMRCareAgent,
+    CMRCareAgentInputSchema,
+    CMRCareAgentOutputSchema,
+    CMRCareConfig,
+)
 
 
 @pytest.mark.asyncio
@@ -26,7 +31,7 @@ async def test_cmr_care_agent(query: str, reasoning_effort: str):
     """
     config = CMRCareConfig(reasoning_effort=reasoning_effort)
     agent = CMRCareAgent(config=config, debug=True)
-    result = await agent.arun(CMRCareInput(query=query))
+    result = await agent.arun(CMRCareAgentInputSchema(query=query))
 
-    assert isinstance(result, CMRCareOutput)
+    assert isinstance(result, CMRCareAgentOutputSchema)
     assert len(result.dataset_concept_ids) > 0
