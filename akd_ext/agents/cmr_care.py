@@ -11,13 +11,16 @@ from __future__ import annotations
 import os
 from typing import Any, Literal
 
-from agents import Agent, HostedMCPTool, ModelSettings, Runner
-from loguru import logger
+from agents import Agent, HostedMCPTool, ModelSettings
 from openai.types.shared.reasoning import Reasoning
 from pydantic import Field
 
 from akd._base import InputSchema, OutputSchema
-from akd_ext.agents._base import OpenAIBaseAgent, OpenAIBaseAgentConfig
+from akd_ext.agents._base import (
+    FreeFormOpenAIBaseAgent,
+    OpenAIBaseAgent,
+    OpenAIBaseAgentConfig,
+)
 
 # -----------------------------------------------------------------------------
 # System Prompts
@@ -446,6 +449,12 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
 # -----------------------------------------------------------------------------
 
 
+class CMRSearchInput(InputSchema):
+    """Input for CMR Search Agent."""
+
+    query: str = Field(..., description="Earth science query for dataset discovery")
+
+
 class CMRCareInput(InputSchema):
     """Input for CMR CARE Agent."""
 
@@ -461,16 +470,43 @@ class CMRCareOutput(OutputSchema):
 
 
 # -----------------------------------------------------------------------------
-# CMR CARE Agent
+# CMR Search Agent (Free-form)
+# -----------------------------------------------------------------------------
+
+
+class CMRSearchAgent(FreeFormOpenAIBaseAgent[CMRSearchInput]):
+    """CMR Search Agent - free-form search using CARE methodology.
+
+    Internal helper for CMRCareAgent pipeline.
+    Returns FreeFormOutput with unstructured search results.
+    """
+
+    input_schema = CMRSearchInput
+    config_schema = CMRCareConfig
+
+    def _create_agent(self) -> Agent:
+        """Create search agent with CMR tools (no output_type)."""
+        return Agent(
+            name="CMRSearchAgent",
+            instructions=self.config.system_prompt,
+            model=self.config.model_name,
+            tools=self.config.tools,
+            model_settings=self.config.model_settings,
+            # No output_type - free-form output
+        )
+
+
+# -----------------------------------------------------------------------------
+# CMR CARE Agent (Orchestrator)
 # -----------------------------------------------------------------------------
 
 
 class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
     """CMR CARE Agent for NASA dataset discovery.
 
-    Implements a multi-agent workflow:
-    1. Search agent queries CMR using the CARE methodology
-    2. Output agent formats results as structured output
+    Composition pattern:
+    - self._search_agent: CMRSearchAgent (free-form output)
+    - self._agent: Output agent (structured CMRCareOutput)
     """
 
     input_schema = CMRCareInput
@@ -483,20 +519,11 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
         debug: bool = False,
     ) -> None:
         super().__init__(config=config, debug=debug)
-        self._output_agent = self._create_output_agent()
+        # Compose search agent as internal helper
+        self._search_agent = CMRSearchAgent(config=self.config, debug=debug)
 
     def _create_agent(self) -> Agent:
-        """Create search agent without output_type (free-form text output)."""
-        return Agent(
-            name="CMRSearchAgent",
-            instructions=self.config.system_prompt,
-            model=self.config.model_name,
-            tools=self.config.tools,
-            model_settings=self.config.model_settings,
-        )
-
-    def _create_output_agent(self) -> Agent:
-        """Create output agent for formatting results."""
+        """Create the output formatting agent (becomes self._agent)."""
         return Agent(
             name="CMROutputAgent",
             instructions=OUTPUT_AGENT_PROMPT,
@@ -508,44 +535,27 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
             ),
         )
 
-    async def _arun(self, params: CMRCareInput, **kwargs: Any) -> CMRCareOutput:
-        """Multi-agent workflow: search agent → output agent."""
+    async def _arun(self, params: CMRCareInput, **kwargs) -> CMRCareOutput:
+        """Orchestrate search -> output pipeline."""
         if self.config.stateless:
             self.reset_memory()
+            self._search_agent.reset_memory()
 
-        if self.debug:
-            logger.debug(f"CMRCareAgent: Starting search with query: {params.query}")
+        # Stage 1: Run search agent (free-form)
+        search_input = CMRSearchInput(query=params.query)
+        search_result = await self._search_agent.arun(search_input)
+        search_response = search_result.response
 
-        # Step 1: Run search agent
-        self._memory.append({"role": "user", "content": params.query})
-        search_result = await Runner.run(
-            self._agent,
-            input=self._memory,
-            run_config=self.config.run_config,
-        )
+        # Stage 2: Run output agent (structured)
+        self._memory.append({"role": "user", "content": search_response})
+        result = await self.get_response_async(messages=self._memory)
+        self._memory = result.to_input_list()
 
-        # Update memory with search conversation
-        self._memory = search_result.to_input_list()
-
-        if self.debug:
-            search_output = search_result.final_output
-            logger.debug(f"CMRCareAgent: Search agent output:\n{search_output}")
-
-        # Step 2: Run output agent to structure results
-        output_result = await Runner.run(
-            self._output_agent,
-            input=self._memory,
-            run_config=self.config.run_config,
-        )
-
-        final_output = output_result.final_output
-
-        if self.debug:
-            logger.debug(f"CMRCareAgent: Output agent result: {final_output}")
-
-        if isinstance(final_output, CMRCareOutput):
+        # Return typed output
+        final_output = result.final_output
+        if isinstance(final_output, self.output_schema):
             return final_output
         elif hasattr(final_output, "model_dump"):
-            return CMRCareOutput(**final_output.model_dump())
+            return self.output_schema(**final_output.model_dump())
         else:
-            return CMRCareOutput.model_validate_json(str(final_output))
+            return self.output_schema.model_validate_json(str(final_output))
