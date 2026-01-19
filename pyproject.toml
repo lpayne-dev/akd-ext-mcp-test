@@ -52,6 +52,7 @@ addopts = [
     "-ra",
     "--cov=akd_ext",
     "--cov-report=term-missing",
+    "--dist=loadfile",
 ]
 markers = [
     "unit: Unit tests",
