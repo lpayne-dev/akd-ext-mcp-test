@@ -1,20 +1,21 @@
 from typing import Optional
 from dataclasses import dataclass, field
-from pydantic import Field
+from pydantic import Field, BaseModel
 from github import Github, Auth
 from akd.tools._base import BaseTool
 from akd.tools.search.code_search import SDECodeSearchTool, SDECodeSearchToolConfig, CodeSearchToolInputSchema, CodeSearchToolOutputSchema
 from akd.tools.search._base import SearchToolOutputSchema
 from akd.structures import SearchResultItem
 
-# Tool specific data
-@dataclass
-class RepositoryMetadata:
-  stars: int = 0
-  forks: int = 0
-  open_issues: int = 0
-  pulls: int = 0
-  closed_pulls: int = 0
+class RepositoryMetadata(BaseModel):
+  """
+    Github repository metadata. includes number of stars, forks, open issues, open pull requests, and closed pull requests.
+  """
+  stars: int = Field(default=0, description="Number of stars on the repository.")
+  forks: int = Field(default=0, description="Number of forks on the repository.")
+  open_issues: int = Field(default=0, description="Number of open issues on the repository.")
+  pulls: int = Field(default=0, description="Number of open pull requests on the repository.")
+  closed_pulls: int = Field(default=0, description="Number of closed pull requests on the repository.")
 
 class RepositorySearchToolSearchResultItem(SearchResultItem):
   """
