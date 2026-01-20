@@ -2,12 +2,13 @@
 
 from collections.abc import Callable
 from inspect import Signature, Parameter
+from typing import Awaitable, Any
 
 from fastmcp import FastMCP
 from akd.tools._base import BaseTool
 
 
-def tool_converter(tool: BaseTool) -> Callable:
+def tool_converter(tool: BaseTool) -> Callable[..., Awaitable[Any]]:
     """
     Convert akd BaseTool to FastMCP-compatible async function.
 
@@ -65,7 +66,7 @@ def tool_converter(tool: BaseTool) -> Callable:
     return mcp_tool_wrapper
 
 
-def register_mcp_tool(mcp_func: Callable, mcp: FastMCP) -> Callable:
+def register_mcp_tool(mcp_func: Callable[..., Awaitable[Any]], mcp: FastMCP) -> Callable[..., Awaitable[Any]]:
     """
     Register a converted function with FastMCP server.
 

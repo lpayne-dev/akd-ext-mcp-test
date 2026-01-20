@@ -8,10 +8,11 @@ class MCPToolRegistry:
     MCP Tool registry implements singleton pattern to ensure consistent tool registration.
 
     Example:
-        from akd_ext.mcp.registry import mcp_tool_registry
-
-        mcp_tool_registry.register(MyTool)
-        tools = mcp_tool_registry.get_tools()
+        from akd_ext.mcp.registry import MCPToolRegistry
+        
+        registry = MCPToolRegistry()
+        registry.register(MyTool)
+        tools = registry.get_tools()
     """
 
     _instance = None
@@ -40,7 +41,8 @@ class MCPToolRegistry:
             The same tool class.
 
         Example:
-            mcp_tool_registry.register(DummyTool)
+            registry = MCPToolRegistry()
+            registry.register(DummyTool)
         """
         if tool_class not in self._tools:
             self._tools.append(tool_class)
@@ -54,7 +56,8 @@ class MCPToolRegistry:
             Copy of the registered tools list.
 
         Example:
-            tools = mcp_tool_registry.get_tools()  # [DummyTool, AnotherTool]
+            registry = MCPToolRegistry()
+            tools = registry.get_tools()  # [DummyTool, AnotherTool]
         """
         return self._tools.copy()
 
@@ -67,6 +70,3 @@ class MCPToolRegistry:
         """Reset the singleton instance (for testing purposes only)."""
         cls._instance = None
         cls._initialized = False
-
-
-mcp_tool_registry = MCPToolRegistry()

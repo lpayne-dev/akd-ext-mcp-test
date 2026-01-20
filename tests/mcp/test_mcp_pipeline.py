@@ -3,7 +3,7 @@
 import pytest
 from akd_ext.tools.dummy import DummyTool, DummyInputSchema
 from akd_ext.mcp.converter import tool_converter
-from akd_ext.mcp.registry import mcp_tool_registry, MCPToolRegistry
+from akd_ext.mcp.registry import MCPToolRegistry
 
 
 class TestDummyTool:
@@ -58,9 +58,10 @@ class TestMCPToolRegistry:
 
     def test_register_and_get_tools(self):
         """Test tool registration."""
-        mcp_tool_registry.clear()
-        mcp_tool_registry.register(DummyTool)
-        tools = mcp_tool_registry.get_tools()
+        registry = MCPToolRegistry()
+        registry.clear()
+        registry.register(DummyTool)
+        tools = registry.get_tools()
         assert DummyTool in tools
 
     def test_reset_singleton(self):
