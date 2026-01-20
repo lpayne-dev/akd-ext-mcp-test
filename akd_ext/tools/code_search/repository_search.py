@@ -4,16 +4,7 @@ from github import Github, Auth
 from akd.tools._base import BaseTool
 from akd.tools.search.code_search import SDECodeSearchTool, SDECodeSearchToolConfig, CodeSearchToolInputSchema, CodeSearchToolOutputSchema
 from akd.structures import SearchResultItem
-
-class RepositoryMetadata(BaseModel):
-  """
-    Github repository metadata. includes number of stars, forks, open issues, open pull requests, and closed pull requests.
-  """
-  stars: int = Field(default=0, description="Number of stars on the repository.")
-  forks: int = Field(default=0, description="Number of forks on the repository.")
-  open_issues: int = Field(default=0, description="Number of open issues on the repository.")
-  pulls: int = Field(default=0, description="Number of open pull requests on the repository.")
-  closed_pulls: int = Field(default=0, description="Number of closed pull requests on the repository.")
+from akd_ext.tools.code_search.utils import RepositoryMetadata, fetch_github_metadata, get_reliability_score
 
 class RepositorySearchResultItem(SearchResultItem):
   """
@@ -74,25 +65,11 @@ class RepositorySearchTool(SDECodeSearchTool):
       parts = url.rstrip('/').split('github.com/')[-1].split('/')
       owner, repo = parts[0], parts[1]
       repo_name = f"{owner}/{repo}"
-      auth = None
-      if self.config.access_token:
-        auth = Auth.Token(self.config.access_token)
       # collect necessary metadata
-      repository_metadata: RepositoryMetadata = RepositoryMetadata()
-      with Github(auth=auth) as g:
-        repo = g.get_repo(repo_name)
-        repository_metadata.stars = repo.stargazers_count
-        repository_metadata.forks = repo.forks_count
-        repository_metadata.open_issues = repo.get_issues(state='open').totalCount
-        repository_metadata.pulls = repo.get_pulls(state='open', sort='created', base='master').totalCount
-        repository_metadata.closed_pulls = repo.get_pulls(state='closed', sort='created', base='master').totalCount
-      reliability_score = self._get_reliability_score(repository_metadata)
+      repository_metadata: RepositoryMetadata = await fetch_github_metadata(repo_name, self.config.access_token)
+      reliability_score: int | float = get_reliability_score(repository_metadata)
       repository_search_result.results.append(RepositorySearchResultItem(**repository.model_dump(), repository_metadata=repository_metadata, reliability_score=reliability_score))
     return repository_search_result
-
-  def _get_reliability_score(self, repository_metadata: RepositoryMetadata) -> float:
-    # TODO: use reliability score calculation formula
-    return 1.0
 
 if __name__ == "__main__":
   import asyncio
