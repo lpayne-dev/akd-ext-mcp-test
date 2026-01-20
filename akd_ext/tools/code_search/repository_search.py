@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field
 from pydantic import Field, BaseModel
 from github import Github, Auth
@@ -33,7 +34,7 @@ class RepositorySearchToolConfig(SDECodeSearchToolConfig):
   """
     Config schema for the repository search tool.
   """
-  access_token: str | None = Field(default=None, description="GitHub access token")
+  access_token: str | None = Field(default=os.getenv("GITHUB_ACCESS_TOKEN", None), description="GitHub access token")
 
 # Tool implementation
 class RepositorySearchTool(SDECodeSearchTool):
