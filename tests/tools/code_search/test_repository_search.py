@@ -2,7 +2,7 @@
 
 import pytest
 
-from akd_ext.tools.repository_search_tool import (
+from akd_ext.tools.code_search.repository_search import (
     RepositorySearchTool,
     RepositorySearchToolConfig,
     RepositorySearchToolInputSchema,

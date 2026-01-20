@@ -1,4 +1,3 @@
-from typing import Optional
 from dataclasses import dataclass, field
 from pydantic import Field, BaseModel
 from github import Github, Auth
@@ -17,7 +16,7 @@ class RepositoryMetadata(BaseModel):
   pulls: int = Field(default=0, description="Number of open pull requests on the repository.")
   closed_pulls: int = Field(default=0, description="Number of closed pull requests on the repository.")
 
-class RepositorySearchToolSearchResultItem(SearchResultItem):
+class RepositorySearchResultItem(SearchResultItem):
   """
     Search result item with added github repository metadata and computed reliability score.
   """
@@ -34,7 +33,7 @@ class RepositorySearchToolOutputSchema(SearchToolOutputSchema):
   """
     Output schema for the repository search tool.
   """
-  results: list[RepositorySearchToolSearchResultItem] = Field(
+  results: list[RepositorySearchResultItem] = Field(
     ...,
     description="List of search result items with added github repository metadata and computed reliability score.",
   )
@@ -44,7 +43,7 @@ class RepositorySearchToolConfig(SDECodeSearchToolConfig):
   """
     Config schema for the repository search tool.
   """
-  access_token: Optional[str] = Field(default=None, description="GitHub access token")
+  access_token: str | None = Field(default=None, description="GitHub access token")
 
 # Tool implementation
 class RepositorySearchTool(SDECodeSearchTool):
@@ -89,7 +88,7 @@ class RepositorySearchTool(SDECodeSearchTool):
         repository_metadata.pulls = repo.get_pulls(state='open', sort='created', base='master').totalCount
         repository_metadata.closed_pulls = repo.get_pulls(state='closed', sort='created', base='master').totalCount
       reliability_score = self._get_reliability_score(repository_metadata)
-      repository_search_result.results.append(RepositorySearchToolSearchResultItem(**repository.model_dump(), repository_metadata=repository_metadata, reliability_score=reliability_score))
+      repository_search_result.results.append(RepositorySearchResultItem(**repository.model_dump(), repository_metadata=repository_metadata, reliability_score=reliability_score))
     return repository_search_result
 
   def _get_reliability_score(self, repository_metadata: RepositoryMetadata) -> float:
