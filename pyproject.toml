@@ -50,6 +50,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 addopts = [
+    "-v",
+    "-n",
+    "auto",
     "--strict-markers",
     "--strict-config",
     "-ra",
