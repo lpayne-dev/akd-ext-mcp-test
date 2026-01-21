@@ -58,6 +58,8 @@ def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> floa
     - Forks (15%): High forks indicate code reuse (log scale)
     - Development History (15%): Longer development history indicates stability
 
+    Code Logic Referenced from: https://github.com/ankurk017/Impacts_of_EO/blob/main/scripts/reliability_score_sample.py
+
     Args:
         repository_metadata: RepositoryMetadata with stars, forks, created_at, last_updated, first_commit_date
 
