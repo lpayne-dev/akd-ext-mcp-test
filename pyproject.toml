@@ -6,6 +6,7 @@ readme = "README.md"
 license = "Apache-2.0"
 authors = [
     {name = "Nish", email = "np0069@uah.edu"},
+    {name = "Sanjog", email = "st0128@uah.edu"},
 ]
 keywords = ["akd", "extension", "tools", "agents"]
 classifiers = [
@@ -19,6 +20,7 @@ dependencies = [
     "akd @ git+https://github.com/NASA-IMPACT/accelerated-discovery.git@develop",
     "fastmcp>=2.0.0",
     "openai-agents>=0.6.7",
+    "PyGithub>=2.1.1",
 ]
 
 [project.urls]
@@ -32,6 +34,7 @@ dev = [
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=6.0.0",
     "pre-commit>=4.2.0",
+    "PyGithub>=2.1.1",
 ]
 
 [build-system]
@@ -48,6 +51,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 addopts = [
+    "-v",
+    "-n",
+    "auto",
     "--strict-markers",
     "--strict-config",
     "-ra",
