@@ -10,6 +10,7 @@ from akd.tools.search.code_search import (
 )
 from akd.structures import SearchResultItem
 from akd_ext.tools.code_search.utils import RepositoryMetadata, fetch_github_metadata, calculate_reliability_score
+from loguru import logger
 
 
 class RepositorySearchResultItem(SearchResultItem):
@@ -112,13 +113,10 @@ if __name__ == "__main__":
     import asyncio
     import sys
 
-    async def main():
-        config = RepositorySearchToolConfig(page_size=2)
-        query = "indus pipeline code"
-        if len(sys.argv) > 1:
-            query = sys.argv[1]
-        tool = RepositorySearchTool(config=config)
-        result = await tool.arun(RepositorySearchToolInputSchema(queries=[query]))
-        print(result.model_dump())
-
-    asyncio.run(main())
+    config = RepositorySearchToolConfig(page_size=2)
+    query = "indus pipeline code"
+    if len(sys.argv) > 1:
+        query = sys.argv[1]
+    tool = RepositorySearchTool(config=config)
+    result = asyncio.run(tool.arun(RepositorySearchToolInputSchema(queries=[query])))
+    logger.info(result.model_dump())
