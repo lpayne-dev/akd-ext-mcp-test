@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 from pydantic import Field, BaseModel
 from github import Github, Auth
 from akd.tools._base import BaseTool
@@ -62,9 +63,10 @@ class RepositorySearchTool(SDECodeSearchTool):
       url: str = str(repository.url)
       if not url:
         continue
-      # Github library to get repository metadata
-      parts = url.rstrip('/').split('github.com/')[-1].split('/')
-      owner, repo = parts[0], parts[1]
+      # Parse URL to extract owner/repo from github url
+      parsed_url = urlparse(url)
+      path_parts = parsed_url.path.strip('/').split('/')
+      owner, repo = path_parts[0], path_parts[1]
       repo_name = f"{owner}/{repo}"
       # collect necessary metadata
       repository_metadata: RepositoryMetadata = await fetch_github_metadata(repo_name, self.config.access_token)
