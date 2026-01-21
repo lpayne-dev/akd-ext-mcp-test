@@ -73,7 +73,7 @@ class RepositorySearchTool(SDECodeSearchTool):
     Search for relevant code and implementations within specialized science repositories.
 
     This tool performs a targeted search across curated scientific codebases to find
-    relevant repositories with README. It enriches the search results with
+    relevant GitHub repositories with README. It enriches the search results with
     GitHub metadata such as stars, forks, and development activity, which are then
     used to compute a reliability score for each item.
 
