@@ -1,7 +1,9 @@
 import os
+import asyncio
 from dataclasses import dataclass, field
+from pydantic import Field
+from typing import List
 from urllib.parse import urlparse
-from pydantic import Field, BaseModel
 from github import Github, Auth
 from akd.tools._base import BaseTool
 from akd.tools.search.code_search import SDECodeSearchTool, SDECodeSearchToolConfig, CodeSearchToolInputSchema, CodeSearchToolOutputSchema
@@ -57,26 +59,27 @@ class RepositorySearchTool(SDECodeSearchTool):
     finally:
       self.output_schema = original_output_schema
 
-    repository_search_result: RepositorySearchToolOutputSchema = RepositorySearchToolOutputSchema(results=[], extra=search_result.extra)
-    # add repository metadata to each result
-    for repository in search_result.results:
-      url: str = str(repository.url)
-      if not url:
-        continue
-      # Parse URL to extract owner/repo from github url
-      parsed_url = urlparse(url)
-      path_parts = parsed_url.path.strip('/').split('/')
-      owner, repo = path_parts[0], path_parts[1]
-      repo_name = f"{owner}/{repo}"
-      # collect necessary metadata
-      repository_metadata: RepositoryMetadata = await fetch_github_metadata(repo_name, self.config.access_token)
-      reliability_score: int | float = calculate_reliability_score(repository_metadata)
-      repository_search_result.results.append(RepositorySearchResultItem(**{
-        **repository.model_dump(),
-        "repository_metadata": repository_metadata,
-        "reliability_score": reliability_score
-        }))
+    tasks: List[asyncio.Task] = [self._enrich_code_search_with_metadata(repository_item) for repository_item in search_result.results]
+    enriched_results: List[RepositorySearchResultItem] = await asyncio.gather(*tasks)
+    repository_search_result: RepositorySearchToolOutputSchema = RepositorySearchToolOutputSchema(results=enriched_results, extra=search_result.extra)
     return repository_search_result
+
+  async def _enrich_code_search_with_metadata(self, repository_item: SearchResultItem) -> RepositorySearchResultItem:
+    url: str = str(repository_item.url)
+    if not url:
+      return RepositorySearchResultItem(**repository_item.model_dump())
+    # Parse URL to extract owner/repo from github url
+    parsed_url = urlparse(url)
+    path_parts = parsed_url.path.strip('/').split('/')
+    owner, repo = path_parts[0], path_parts[1]
+    repo_name = f"{owner}/{repo}"
+    repository_metadata: RepositoryMetadata = await fetch_github_metadata(repo_name, self.config.access_token)
+    reliability_score: int | float = calculate_reliability_score(repository_metadata)
+    return RepositorySearchResultItem(**{
+      **repository_item.model_dump(),
+      "repository_metadata": repository_metadata,
+      "reliability_score": reliability_score
+      })
 
 if __name__ == "__main__":
   import asyncio
