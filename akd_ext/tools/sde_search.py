@@ -101,11 +101,43 @@ class SDESearchToolOutputSchema(SearchToolOutputSchema):
 
 class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema]):
     """
-    Search the NASA Science Discovery Engine for scientific documents and resources.
+    Search NASA's Science Discovery Engine (SDE) using the unified /api/search endpoint.
 
-    This tool queries the SDE API to find datasets, documentation, publications,
-    software, and other scientific resources across NASA's Science Mission Directorate
-    divisions (Astrophysics, Earth Science, Heliophysics, Planetary Science, etc.).
+    The Science Discovery Engine (SDE) is NASA's centralized search platform that indexes
+    scientific data, publications, and resources from multiple NASA data sources including
+    CMR (Earth observation), PDS (planetary science), SPASE (heliophysics), GCN (astronomy),
+    code repositories, and documentation.
+
+    This tool uses the /api/search endpoint which provides cross-source search with vector, keyword and hybrid
+    (vector + keyword) semantic search capabilities, returning unified results across all
+    indexed NASA content.
+
+    Input parameters (query-time, LLM-controllable):
+    - query: Natural language search query (e.g., "Mars rover spectroscopy data")
+    - limit: Maximum number of results to return (1-100, default: 10)
+    - doc_type: Optional filter by document type (Data, Documentation, Software and Tools,
+                Images, Missions and Instruments)
+
+    Configuration parameters (instance-time, user-controlled):
+    - search_type: Search mode - "hybrid" (default, vector+keyword), "vector" (semantic only),
+                   or "keyword" (text-based only). Fixed at tool instantiation.
+    - division: Optional NASA SMD division filter (Astrophysics, Earth Science, Heliophysics,
+                Planetary Science). If set, all searches are scoped to this division.
+    - validate_urls: Whether to validate result URLs with HTTP HEAD requests (default: True).
+                     Filters out inaccessible resources.
+    - result_multiplier: When validate_urls=True, fetches this multiple of the limit to account
+                        for filtered results (default: 2.0, range: 1.0-10.0)
+    - timeout: HTTP request timeout in seconds (default: 30.0)
+    - url_check_timeout: Timeout for URL validation requests in seconds (default: 5.0)
+
+    Returns documents with:
+    - title: Document or dataset title
+    - url: Direct link to the resource
+    - content: Description, abstract, or relevant text snippet
+    - score: Relevance score from search engine
+    - division: NASA SMD division (Astrophysics, Earth Science, Heliophysics, Planetary Science)
+    - doc_type: Type of document/resource
+    - source: Origin data source (sde-cmr, sde-pds4, sde-web, sde-code, etc.)
     """
 
     input_schema = SDESearchToolInputSchema
