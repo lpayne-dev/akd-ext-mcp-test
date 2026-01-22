@@ -6,6 +6,7 @@ Discovery Engine for relevant scientific documents, datasets, and resources usin
 natural language queries.
 """
 
+import asyncio
 import os
 import httpx
 from akd._base import InputSchema
@@ -37,6 +38,20 @@ class SDESearchToolConfig(BaseToolConfig):
     search_type: Literal["hybrid", "vector", "keyword"] = Field(
         default="hybrid",
         description="Search type: 'hybrid' (vector + keyword), 'vector' (semantic), 'keyword' (text-based)",
+    )
+    validate_urls: bool = Field(
+        default=True,
+        description="Validate document URLs with HTTP HEAD requests to filter out 404s",
+    )
+    url_check_timeout: float = Field(
+        default=5.0,
+        description="Timeout for individual URL validation requests in seconds",
+    )
+    result_multiplier: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=10.0,
+        description="Multiplier for initial results to fetch (e.g., 2.0 fetches 2x limit from API before filtering)",
     )
 
 
@@ -84,7 +99,6 @@ class SDESearchToolOutputSchema(SearchToolOutputSchema):
     results: list[SDEDocument] = Field(..., description="List of matching documents from SDE")
 
 
-# not basing it on SearchTool because this just a wrapper around SDE API
 class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema]):
     """
     Search the NASA Science Discovery Engine for scientific documents and resources.
@@ -97,6 +111,27 @@ class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema
     input_schema = SDESearchToolInputSchema
     output_schema = SDESearchToolOutputSchema
     config_schema = SDESearchToolConfig
+
+    async def _check_url_exists(self, url: str) -> bool:
+        """
+        Check if a URL is accessible using HTTP HEAD request.
+
+        Args:
+            url: The URL to check
+
+        Returns:
+            bool: True if URL is accessible (status < 400), False otherwise
+        """
+        if not url:
+            return False
+
+        try:
+            async with httpx.AsyncClient(timeout=self.config.url_check_timeout, follow_redirects=True) as client:
+                response = await client.head(url)
+                return response.status_code < 400
+        except Exception as e:
+            logger.debug(f"URL check failed for {url}: {e}")
+            return False
 
     def _parse_document(self, doc: dict, query: str) -> SDEDocument:
         """
@@ -148,11 +183,19 @@ class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema
 
     async def _arun(self, params: SDESearchToolInputSchema) -> SDESearchToolOutputSchema:
         """Execute SDE search query and return formatted results."""
+        # Calculate fetch size: if URL validation is enabled, fetch more to account for filtering
+        fetch_size = params.limit
+        if self.config.validate_urls:
+            fetch_size = min(int(params.limit * self.config.result_multiplier), 100)
+            logger.debug(
+                f"Fetching {fetch_size} results (limit={params.limit}, multiplier={self.config.result_multiplier})"
+            )
+
         # Build request payload
         request_body = {
             "search_term": params.query,
             "page": 1,
-            "pageSize": params.limit,
+            "pageSize": fetch_size,
             "search_type": self.config.search_type,
         }
 
@@ -194,10 +237,42 @@ class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema
 
         documents = [self._parse_document(doc, params.query) for doc in data.get("documents", [])]
 
+        # Validate URLs if configured
+        if self.config.validate_urls:
+            logger.debug(f"Validating {len(documents)} document URLs")
+            # Check all URLs in parallel using asyncio.gather
+            url_checks = await asyncio.gather(
+                *[self._check_url_exists(doc.url) for doc in documents],
+                return_exceptions=True,
+            )
+
+            # Filter out documents with invalid URLs
+            validated_documents = []
+            for doc, is_valid in zip(documents, url_checks, strict=False):
+                # Handle exceptions as invalid
+                if isinstance(is_valid, Exception):
+                    logger.debug(f"URL validation exception for {doc.url}: {is_valid}")
+                    continue
+                if is_valid:
+                    validated_documents.append(doc)
+                else:
+                    logger.debug(f"Filtered out document with inaccessible URL: {doc.url}")
+
+            documents = validated_documents
+            logger.debug(f"Retained {len(documents)} documents after URL validation")
+
+        # Limit results to requested limit (in case we fetched more for validation)
+        final_documents = documents[: params.limit]
+
+        if len(documents) > params.limit:
+            logger.debug(f"Truncating {len(documents)} results to requested limit of {params.limit}")
+
         return SDESearchToolOutputSchema(
-            results=documents,
+            results=final_documents,
             extra={
                 "total_count": data.get("total_count", 0),
                 "query_used": params.query,
+                "filtered_count": len(final_documents) if self.config.validate_urls else None,
+                "requested_limit": params.limit,
             },
         )
