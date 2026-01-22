@@ -17,6 +17,7 @@ from pydantic import Field
 from typing import Literal
 from loguru import logger
 
+from akd_ext.mcp import mcp_tool
 from akd_ext.structures import SDEIndexedDocumentType, NASASMDDivision
 
 
@@ -99,6 +100,7 @@ class SDESearchToolOutputSchema(SearchToolOutputSchema):
     results: list[SDEDocument] = Field(..., description="List of matching documents from SDE")
 
 
+@mcp_tool
 class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema]):
     """
     Search NASA's Science Discovery Engine (SDE) using the unified /api/search endpoint.
