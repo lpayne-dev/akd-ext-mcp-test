@@ -118,7 +118,7 @@ class RepositorySearchTool(SDECodeSearchTool):
         owner, repo = path_parts[0], path_parts[1]
         repo_name = f"{owner}/{repo}"
         repository_metadata: RepositoryMetadata = await fetch_github_metadata(repo_name, self.config.access_token)
-        reliability_score: float = calculate_reliability_score(repository_metadata)
+        reliability_score: float | None = calculate_reliability_score(repository_metadata)
         return RepositorySearchResultItem(
             **{
                 **repository_item.model_dump(),

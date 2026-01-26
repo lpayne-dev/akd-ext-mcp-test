@@ -52,7 +52,7 @@ async def fetch_github_metadata(repo_name: str, access_token: str | None = None)
     return repository_metadata
 
 
-def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> float:
+def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> float | None:
     """
     Calculate a comprehensive reliability score (0-100) for a repository.
 
@@ -71,6 +71,10 @@ def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> floa
     Returns:
         float: reliability score between 0 and 100
     """
+    # if repository_metadata is default return None
+    if repository_metadata == RepositoryMetadata():
+        return None
+
     now = datetime.now(timezone.utc)
 
     # Parse dates - return 0 if essential data is missing
