@@ -2,7 +2,7 @@ from github import Github, Auth
 from pydantic import BaseModel, Field, computed_field
 from datetime import datetime, timezone
 import math
-from functools import lru_cache
+from async_lru import alru_cache
 from loguru import logger
 
 
@@ -32,7 +32,7 @@ class RepositoryMetadata(BaseModel):
         )
 
 
-@lru_cache(maxsize=128)
+@alru_cache(maxsize=128)
 async def fetch_github_metadata(repo_name: str, access_token: str | None = None) -> RepositoryMetadata:
     """
     Repo_name should be in the format of owner/repo
