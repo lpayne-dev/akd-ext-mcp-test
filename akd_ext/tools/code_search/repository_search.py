@@ -21,8 +21,9 @@ class RepositorySearchResultItem(SearchResultItem):
     Search result item with added github repository metadata and computed reliability score.
     """
 
-    reliability_score: float = Field(
-        default=1.0, description="Computed reliability score based on github repository metadata."
+    reliability_score: float | None = Field(
+        default=None,
+        description="Computed reliability score based on github repository metadata. If none, treat it neutrally as if there is no reliability score.",
     )
     repository_metadata: RepositoryMetadata = Field(
         default_factory=RepositoryMetadata,
