@@ -1,5 +1,5 @@
 from github import Github, Auth
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from datetime import datetime, timezone
 import math
 from functools import lru_cache
@@ -22,6 +22,14 @@ class RepositoryMetadata(BaseModel):
     open_issues: int = Field(default=0, description="Number of open issues on the repository.")
     pulls: int = Field(default=0, description="Number of open pull requests on the repository.")
     closed_pulls: int = Field(default=0, description="Number of closed pull requests on the repository.")
+
+    @computed_field
+    @property
+    def is_null_metadata(self) -> bool:
+        return all(
+            getattr(self, field_name) == field_info.default
+            for field_name, field_info in RepositoryMetadata.model_fields.items()
+        )
 
 
 @lru_cache(maxsize=128)
@@ -69,10 +77,10 @@ def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> floa
         repository_metadata: RepositoryMetadata with stars, forks, created_at, last_updated, first_commit_date
 
     Returns:
-        float: reliability score between 0 and 100
+        float: reliability score between 0 and 100 or None if metadata is null
     """
-    # if repository_metadata is default return None
-    if repository_metadata == RepositoryMetadata():
+
+    if repository_metadata.is_null_metadata:
         return None
 
     now = datetime.now(timezone.utc)
@@ -131,9 +139,11 @@ def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> floa
 
 if __name__ == "__main__":
     import asyncio
+    from dotenv import load_dotenv
     import os
     import sys
 
+    load_dotenv()
     access_token = os.getenv("GITHUB_ACCESS_TOKEN", None)
     repo = "NASA-IMPACT/veda-config-ghg"
     if len(sys.argv) > 1:
