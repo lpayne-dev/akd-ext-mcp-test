@@ -47,6 +47,13 @@ class TestFetchGithubMetadata:
         rate_limited_result = await uncached_fetch("NASA-IMPACT/veda-config-ghg", None)
         assert rate_limited_result.is_null_metadata is True
 
+    @pytest.mark.asyncio
+    async def test_async_lru_cache(self):
+        """Test async lru cache. It should function properly without failing on gather."""
+        tasks = [fetch_github_metadata("NASA-IMPACT/veda-config-ghg", None) for _ in range(65)]
+        results = await asyncio.gather(*tasks)
+        assert len(results) == 65
+
 
 class TestCalculateReliabilityScore:
     """Tests for calculate_reliability_score function."""
