@@ -13,7 +13,7 @@ from akd.tools.search.code_search import (
 from akd.structures import SearchResultItem
 
 from akd_ext.mcp import mcp_tool
-from .utils import RepositoryMetadata, fetch_github_metadata, calculate_reliability_score
+from akd_ext.tools.code_search.utils import RepositoryMetadata, fetch_github_metadata, calculate_reliability_score
 
 
 class RepositorySearchResultItem(SearchResultItem):
@@ -34,10 +34,25 @@ class RepositorySearchResultItem(SearchResultItem):
     @classmethod
     def convert_parent_instance(cls, data):
         """
-        While we call super()._arun(params), the parent pydantic validation runs on the parents output schema.
-        The data of the parent instance is SearchResultItem. However, the data of this cls is RepositorySearchResultItem.
-        To avoid this pydantic validation inconsistency on results, we need to return the model dump of the parent instance.
+        This is to fix a issue:
+
+        # This issue happens while we call super()._arun(params)
+
+        Issue Source:
+        - If the data is made in SDECodeSearchTool, result will be SearchResultItem,
+        - If the data is made in RepositorySearchTool, result will be RepositorySearchResultItem,
+
+        - So, when we invoke super()._arun(params), i.e. SDECodeSearchTool, the _arun_single_query(params) is run,
+            - Here,
+                - the self.output_schema it will be RepositorySearchResultItem,
+                - the results collected will be instance of SearchResultItem.
+                - Hence, the missmatch will occur when we try to coerce SearchResultItem to RepositorySearchResultItem.
+        - Temporary fix is:
+            - For SDECodeSearchTool, in before model validator, convert the missmatching SearchResultItem as json.
+            - Now, json can be easily coerced to RepositorySearchResultItem, hence the issue is patched.
+
         TODO: fix this issue in the core
+            Hint: maybe while collecting the results, do not assign any explicit `type. Only do type casting in the end.
         """
         if isinstance(data, SearchResultItem) and not isinstance(data, cls):
             return data.model_dump()
