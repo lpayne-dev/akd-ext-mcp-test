@@ -15,7 +15,6 @@ from openai.types.shared.reasoning import Reasoning
 from pydantic import Field
 
 from akd._base import (
-    Memory,
     RunContext,
     InputSchema,
     OutputSchema,
@@ -140,6 +139,17 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
     def memory(self) -> list[dict[str, Any]]:
         """Conversation history for multi-turn interactions."""
         return self._memory
+
+    @memory.setter
+    def memory(self, value: Any) -> None:
+        """Allow parent class to set memory."""
+        # Parent class passes Memory object, we store as list
+        if hasattr(value, "messages"):
+            self._memory = value.messages
+        elif isinstance(value, list):
+            self._memory = value
+        else:
+            self._memory = []
 
     def reset_memory(self) -> None:
         """Clear conversation history."""
@@ -368,7 +378,13 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 messages.append({"role": "assistant", "content": final_output.model_dump_json(exclude={"type"})})
                 self._memory = messages
 
-            output = response_model.model_validate_json(final_output)
+            # final_output may already be parsed model or JSON string
+            if isinstance(final_output, response_model):
+                output = final_output
+            elif isinstance(final_output, str):
+                output = response_model.model_validate_json(final_output)
+            else:
+                output = response_model.model_validate(final_output)
             yield CompletedEvent(
                 source=class_name,
                 message=f"Completed {class_name}",
@@ -407,15 +423,6 @@ class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, F
     """
 
     output_schema = FreeFormOutput
-
-    def __init__(
-        self,
-        config: OpenAIBaseAgentConfig | None = None,
-        memory: Memory | None = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(config=config, **kwargs)
-        self.memory = memory or Memory()
 
     def _create_agent(self) -> Agent:
         """Create agent WITHOUT output_type (free-form text output)."""

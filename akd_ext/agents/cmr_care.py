@@ -560,9 +560,9 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
         1. Run search agent with user query
         2. Pass FULL conversation history (including tool calls) to output agent
         """
-        if self.config.stateless:
-            self.reset_memory()
-            self._search_agent.reset_memory()
+        # if self.config.stateless:
+        #     self.reset_memory()
+        #     self._search_agent.reset_memory()
 
         # Stage 1: Run search agent (free-form)
         search_input = CMRSearchAgentInputSchema(query=params.query)
@@ -577,7 +577,7 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
         result = await self.get_response_async(messages=search_conversation)
 
         # Update our memory with the full conversation
-        self._memory = result.to_input_list()
+        # self._memory = result.to_input_list()
 
         # Return typed output
         final_output = result.final_output
@@ -587,3 +587,20 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
             return self.output_schema(**final_output.model_dump())
         else:
             return self.output_schema.model_validate_json(str(final_output))
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    async def main():
+        config = CMRCareConfig()
+        agent = CMRCareAgent(config=config)
+
+        question = "Can you find me datasets about sea ice?"
+
+        async for event in agent.astream(
+            CMRCareAgentInputSchema(query=question),
+        ):
+            print(event)
+
+    asyncio.run(main())
