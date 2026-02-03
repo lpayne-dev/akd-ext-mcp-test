@@ -8,6 +8,12 @@ from .sde_search import (
     SDESearchToolInputSchema,
     SDESearchToolOutputSchema,
 )
+from .code_search.code_signals_search import (
+    CodeSignalsSearchInputSchema,
+    CodeSignalsSearchOutputSchema,
+    CodeSignalsSearchTool,
+    CodeSignalsSearchToolConfig,
+)
 from .code_search.repository_search import (
     RepositorySearchTool,
     RepositorySearchToolInputSchema,
@@ -24,6 +30,10 @@ __all__ = [
     "SDESearchToolOutputSchema",
     "SDESearchToolConfig",
     "SDEDocument",
+    "CodeSignalsSearchInputSchema",
+    "CodeSignalsSearchOutputSchema",
+    "CodeSignalsSearchTool",
+    "CodeSignalsSearchToolConfig",
     "RepositorySearchTool",
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
