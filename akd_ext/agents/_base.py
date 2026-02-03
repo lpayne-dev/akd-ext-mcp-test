@@ -15,6 +15,8 @@ from openai.types.shared.reasoning import Reasoning
 from pydantic import Field
 
 from akd._base import (
+    Memory,
+    RunContext,
     InputSchema,
     OutputSchema,
     StartingEvent,
@@ -390,7 +392,7 @@ class FreeFormOutput(OutputSchema):
     response: str = Field(..., description="Free-form text response from agent")
 
 
-class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, FreeFormOutput]):
+class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, FreeFormOutput, StreamingMixin]):
     """Base for OpenAI agents returning free-form text (no structured output_type).
 
     Use when the agent should return unstructured text that gets wrapped
@@ -405,6 +407,15 @@ class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, F
     """
 
     output_schema = FreeFormOutput
+
+    def __init__(
+        self,
+        config: OpenAIBaseAgentConfig | None = None,
+        memory: Memory | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(config=config, **kwargs)
+        self.memory = memory or Memory()
 
     def _create_agent(self) -> Agent:
         """Create agent WITHOUT output_type (free-form text output)."""
@@ -429,3 +440,52 @@ class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, F
         # Wrap string response in output schema
         response_text = str(result.final_output)
         return self.output_schema(response=response_text)
+
+    async def _astream(self, params: InSchema, **kwargs) -> AsyncIterator[StreamEvent]:
+        """Stream agent response and yield events."""
+        class_name = self.__class__.__name__
+        run_context = kwargs.get("run_context")
+        if run_context is None:
+            run_context = RunContext()
+
+        yield StartingEvent(
+            source=class_name,
+            message=f"Starting {class_name}",
+            data=StartingEventData[self.input_schema](params=params),
+            run_context=run_context,
+        )
+
+        try:
+            async with self.memory.asession(
+                stateless=self.stateless,
+                run_context=run_context,
+                enable_trimming=self.enable_trimming,
+                model_name=self.model_name,
+                max_tokens=self.max_tokens,
+                trim_ratio=self.trim_ratio,
+            ) as messages:
+                if params:
+                    messages.append({"role": "user", "content": params.model_dump_json(exclude={"type"})})
+
+                yield RunningEvent(
+                    source=class_name,
+                    message=f"Running {class_name}",
+                    data=RunningEventData(),
+                    run_context=run_context,
+                )
+
+                output: FreeFormOutput = await self._arun(params, **kwargs)
+                yield CompletedEvent(
+                    source=class_name,
+                    message=f"Completed {class_name}",
+                    data=CompletedEventData[self.output_schema](output=output),
+                    run_context=run_context,
+                )
+        except Exception as e:
+            yield FailedEvent(
+                source=class_name,
+                message=f"Failed: {e!s}",
+                data=FailedEventData(error=str(e), error_type=type(e).__name__),
+                run_context=run_context,
+            )
+            raise
