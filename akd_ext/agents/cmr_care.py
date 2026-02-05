@@ -655,7 +655,7 @@ if __name__ == "__main__":
 
         question = "Can you find me datasets about sea ice?"
 
-        async for event in agent.astream(
+        async for event in agent._astream(
             CMRCareAgentInputSchema(query=question),
         ):
             print(event)
