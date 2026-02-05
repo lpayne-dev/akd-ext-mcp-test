@@ -8,7 +8,7 @@ from .sde_search import (
     SDESearchToolInputSchema,
     SDESearchToolOutputSchema,
 )
-from .code_search.code_signals_search import (
+from .code_search.code_signals import (
     CodeSignalsSearchInputSchema,
     CodeSignalsSearchOutputSchema,
     CodeSignalsSearchTool,

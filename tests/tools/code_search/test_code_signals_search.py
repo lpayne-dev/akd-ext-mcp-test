@@ -2,7 +2,7 @@
 
 import pytest
 
-from akd_ext.tools.code_search.code_signals_search import (
+from akd_ext.tools.code_search.code_signals import (
     CodeSignalsSearchTool,
     CodeSignalsSearchToolConfig,
     CodeSignalsSearchInputSchema,

@@ -7,6 +7,7 @@ Use as fallback when README-based search (RepositorySearchTool) is insufficient.
 
 import os
 from typing import Any, Literal
+from urllib.parse import urljoin
 
 import httpx
 from loguru import logger
@@ -18,15 +19,17 @@ from akd.tools import BaseTool, BaseToolConfig
 
 from akd_ext.mcp import mcp_tool
 
-DEFAULT_CODE_SIGNALS_BASE_URL = "https://dyejsbdumgpqz.cloudfront.net/"
-
 
 class CodeSignalsSearchToolConfig(BaseToolConfig):
     """Configuration for the Code Signals Search Tool."""
 
-    base_url: str = Field(
-        default=os.getenv("SDE_CODE_SIGNALS_URL", DEFAULT_CODE_SIGNALS_BASE_URL),
-        description="Base URL for the SDE Code Signals API",
+    sde_base_url: str = Field(
+        default=os.getenv("SDE_BASE_URL", "https://dyejsbdumgpqz.cloudfront.net/"),
+        description="Base URL for SDE API",
+    )
+    endpoint: str = Field(
+        default="/api/code_signals/search",
+        description="Code signals search endpoint",
     )
     timeout: float = Field(
         default=30.0,
@@ -36,6 +39,7 @@ class CodeSignalsSearchToolConfig(BaseToolConfig):
         default="hybrid",
         description="Search type: 'hybrid' (vector + keyword, recommended), 'vector' (semantic only), 'keyword' (exact matching)",
     )
+    debug: bool = Field(default=False, description="Enable debug logging")
 
 
 class CodeSignalsHit(SearchResult):
@@ -109,9 +113,10 @@ class CodeSignalsSearchTool(BaseTool[CodeSignalsSearchInputSchema, CodeSignalsSe
             "page": params.page,
         }
 
-        logger.debug(f"Code Signals API request: {request_body}")
+        if self.config.debug:
+            logger.debug(f"Code Signals API request: {request_body}")
 
-        url = f"{self.config.base_url.rstrip('/')}/api/code_signals/search"
+        url = urljoin(self.config.sde_base_url, self.config.endpoint)
 
         async with httpx.AsyncClient(timeout=self.config.timeout) as client:
             try:
