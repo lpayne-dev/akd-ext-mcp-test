@@ -36,8 +36,13 @@ from akd._base import (
     CompletedEventData,
     FailedEvent,
     FailedEventData,
+    HumanResponseEvent,
+    HumanResponseEventData,
+    HumanInputRequiredEvent,
+    HumanInputRequiredEventData,
 )
 from akd.agents._base import BaseAgent, BaseAgentConfig
+from akd.tools.human import HumanToolInput
 
 
 class OpenAIBaseAgentConfig(BaseAgentConfig):
@@ -562,6 +567,24 @@ class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, F
         if "run_id" not in run_context:
             run_context["run_id"] = uuid.uuid4().hex[:8]
 
+        if run_context.get("human_response"):
+            content = run_context.get("human_response").content
+            self._memory.append(
+                {
+                    "role": "user",
+                    "content": content if isinstance(content, str) else json.dumps(content),
+                },
+            )
+            yield HumanResponseEvent(
+                source=class_name,
+                message="Resumed with human input",
+                data=HumanResponseEventData(
+                    tool_call_id=run_context.human_response.tool_call_id,
+                    response=content,
+                ),
+                run_context=run_context,
+            )
+
         yield StartingEvent(
             source=class_name,
             message=f"Starting {class_name}",
@@ -619,6 +642,38 @@ class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, F
                         ),
                         run_context=run_context,
                     )
+
+                    if chunk["tool_name"] == "ask_human":
+                        # Store messages in run_context for resumption
+                        run_context["messages"] = list(self._memory) if self._memory else []
+                        run_context["messages"].append(
+                            {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": {
+                                    "id": chunk.get("tool_call_id") or uuid.uuid4().hex[:8],
+                                    "type": "function",
+                                    "function": {"name": chunk["tool_name"], "arguments": tool_args},
+                                },
+                            },
+                        )
+
+                        # Yield HUMAN_INPUT_REQUIRED with full state for resumption
+                        yield HumanInputRequiredEvent(
+                            source=class_name,
+                            message=f"Human input required: {tool_args.get('question', 'Input needed')}",
+                            data=HumanInputRequiredEventData(
+                                human_input=HumanToolInput(
+                                    question=tool_args.get("question", "Input needed"),
+                                ),
+                                tool_call_id=chunk.get("tool_call_id") or uuid.uuid4().hex[:8],
+                                tool_name=chunk["tool_name"],
+                                arguments=tool_args,
+                            ),
+                            run_context=run_context,
+                        )
+                        # End generator gracefully - caller will resume with fresh astream() call
+                        return
 
                 elif chunk["type"] == StreamEventType.TOOL_RESULT:
                     yield ToolResultEvent(

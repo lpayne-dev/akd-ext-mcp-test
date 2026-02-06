@@ -20,10 +20,15 @@ from pydantic import Field
 from akd._base import (
     InputSchema,
     OutputSchema,
+    StartingEvent,
+    StartingEventData,
+    RunningEvent,
+    RunningEventData,
     CompletedEvent,
     CompletedEventData,
     FailedEvent,
     FailedEventData,
+    HumanInputRequiredEvent,
 )
 from akd_ext.agents._base import (
     FreeFormOpenAIBaseAgent,
@@ -33,6 +38,10 @@ from akd_ext.agents._base import (
 )
 
 from akd._base.streaming import StreamEvent
+
+from agents import function_tool
+from akd_ext.mcp.converter import tool_converter
+from akd.tools.human import HumanTool
 
 # -----------------------------------------------------------------------------
 # System Prompts
@@ -443,7 +452,8 @@ def _default_cmr_tools() -> list[Any]:
                     "https://w4hu71445m.execute-api.us-east-1.amazonaws.com/mcp/cmr/mcp",
                 ),
             }
-        )
+        ),
+        function_tool(tool_converter(HumanTool())),
     ]
 
 
@@ -598,8 +608,18 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
         else:
             return self.output_schema.model_validate_json(str(final_output))
 
-    async def _astream(self, params: CMRCareAgentInputSchema, **kwargs) -> AsyncIterator[StreamEvent]:
+    async def _astream(
+        self,
+        params: CMRCareAgentInputSchema,
+        context: dict[str, Any] | None = None,
+        token_batch_size: int = 10,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamEvent]:
         """Orchestrate search -> output pipeline."""
+
+        class_name = self.__class__.__name__
+        run_context = context.copy() if context else {}
+
         if self.config.stateless:
             self.reset_memory()
             self._search_agent.reset_memory()
@@ -607,23 +627,44 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
         # Manual iteration to capture return value from async generator
         search_result_gen = self._search_agent._astream(CMRSearchAgentInputSchema(query=params.query), run_context=None)
         search_result = None
+        run_context = {}
 
         async for event in search_result_gen:
             if isinstance(event, CompletedEvent):
-                search_result = event.data
+                search_result = event.data.output.response
+                run_context = event.run_context
+            if isinstance(event, HumanInputRequiredEvent):
+                yield event
+                # halt for user event
+                return
             yield event
 
         if self.debug:
-            logger.debug("Search agent freeform response: {}", search_result.response)
+            logger.debug("Search agent freeform response: {}", search_result)
 
         if not search_result:
-            CompletedEvent(data=CompletedEventData[self.output_schema](output=self.output_schema()))
+            yield FailedEvent(
+                data=FailedEventData(error="No search result to further process", error_type="ValueError")
+            )
+            return
 
-        # self._memory.extend(search_result.to_input_list())
         self._memory = self._search_agent.memory
         conversation_message = self._memory
 
+        yield StartingEvent(
+            source=class_name,
+            message=f"Starting {class_name}",
+            data=StartingEventData[self.input_schema](query=search_result),
+            run_context=run_context,
+        )
+
         try:
+            yield RunningEvent(
+                source=class_name,
+                message=f"Running {class_name}",
+                data=RunningEventData(),
+                run_context=run_context,
+            )
             result = await self.get_response_async(messages=conversation_message)
         except Exception as e:
             logger.error("Error in output agent: {}", e)
@@ -636,13 +677,15 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
             yield CompletedEvent(data=CompletedEventData[self.output_schema](output=final_output))
         elif hasattr(final_output, "model_dump"):
             yield CompletedEvent(
-                data=CompletedEventData[self.output_schema](output=self.output_schema(**final_output.model_dump()))
+                data=CompletedEventData[self.output_schema](output=self.output_schema(**final_output.model_dump())),
+                class_name=class_name,
             )
         else:
             yield CompletedEvent(
                 data=CompletedEventData[self.output_schema](
                     output=self.output_schema.model_validate_json(str(final_output))
-                )
+                ),
+                class_name=class_name,
             )
 
 
