@@ -3,18 +3,40 @@
 This module implements the CMR CARE (Clarify, Analyze, Rank, Explain) Agent
 for transparent, reproducible discovery of NASA Earthdata datasets.
 
+Public API:
+    CMRCareAgent, CMRCareAgentInputSchema, CMRCareAgentOutputSchema, CMRCareConfig
+
 Co-Authored-By: Sanjog Thapa <sanzog03@gmail.com>
 """
 
 from __future__ import annotations
 
 import os
+import uuid
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 from agents import HostedMCPTool
 from pydantic import Field
 
-from akd._base import InputSchema, OutputSchema, TextOutput
+from akd._base import (
+    InputSchema,
+    OutputSchema,
+    TextOutput,
+    RunContext,
+    StreamEvent,
+    StartingEvent,
+    StartingEventData,
+    RunningEvent,
+    CompletedEvent,
+    CompletedEventData,
+    FailedEvent,
+    FailedEventData,
+    PartialOutputEvent,
+    PartialEventData,
+    HumanInputRequiredEvent,
+)
+from akd.utils import PartialModel
 from akd_ext.agents._base import (
     OpenAIBaseAgent,
     OpenAIBaseAgentConfig,
@@ -389,7 +411,7 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     - **UMM Specification**: https://earthdata.nasa.gov/eosdis/science-system-description/eosdis-components/common-metadata-repository
     """
 
-OUTPUT_AGENT_PROMPT = """Get the ranked list of outputs from the previous response and provide as structured output.
+_OUTPUT_AGENT_PROMPT = """Get the ranked list of outputs from the previous response and provide as structured output.
     Also provide a report with the reasoning in markdown format:
 
     # Report
@@ -430,35 +452,29 @@ def _default_cmr_tools() -> list[Any]:
                 ),
             }
         ),
-        # function_tool(tool_converter(HumanTool())),
     ]
 
 
-class CMRDataSearchCareAgentConfig(OpenAIBaseAgentConfig):
+class CMRCareConfig(OpenAIBaseAgentConfig):
+    """Configuration for CMR CARE Agent.
+
+    Carries all settings for the orchestrator and its sub-agents.
+    system_prompt + tools are for the search agent.
+    formatter_system_prompt is for the output formatter (no tools).
+    """
+
     system_prompt: str = Field(default=CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
     tools: list[Any] = Field(default_factory=_default_cmr_tools)
-
-
-class CMROutputCareAgentConfig(OpenAIBaseAgentConfig):
-    system_prompt: str = Field(default=OUTPUT_AGENT_PROMPT)
-    model_name: str = Field(default="gpt-5.2")
-    reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
-
-
-class CMRCareConfig(OpenAIBaseAgentConfig):
-    """Configuration for CMR CARE Agent."""
-
-    pass
+    formatter_system_prompt: str = Field(default=_OUTPUT_AGENT_PROMPT)
 
 
 # -----------------------------------------------------------------------------
-# Input/Output Schemas
+# Public Input/Output Schemas
 # -----------------------------------------------------------------------------
 
 
-# CMR CARE ORCHESTRATOR AGENT
 class CMRCareAgentInputSchema(InputSchema):
     """Input schema for CMR CARE Agent."""
 
@@ -473,120 +489,192 @@ class CMRCareAgentOutputSchema(OutputSchema):
     report: str = Field(default="", description="Detailed report with reasoning")
 
 
-# CMR DATA SEARCH CARE AGENT
-class CMRDataSearchCareAgentInputSchema(InputSchema):
-    """Input schema for CMR CARE Agent."""
+# -----------------------------------------------------------------------------
+# Private sub-agent schemas
+# -----------------------------------------------------------------------------
+
+
+class _CMRSearchAgentInputSchema(InputSchema):
+    """Input schema for the internal CMR search agent."""
 
     query: str = Field(..., description="Earth science query for dataset discovery")
 
 
-class CMRDataSearchCareAgentOutputSchema(TextOutput):
-    """Output schema for CMR CARE Agent."""
+class _CMRSearchAgentOutputSchema(TextOutput):
+    """Output schema for the internal CMR search agent (free-form text)."""
 
     pass
 
 
-# CMR OUTPUT AGENT
-class CMROutputCareAgentInputSchema(InputSchema):
-    """
-    description
-    """
+class _CMROutputAgentInputSchema(InputSchema):
+    """Input for output formatter — receives raw search results."""
 
-    pass
-
-
-class CMROutputCareAgentOutputSchema(OutputSchema):
-    """
-    description
-    """
-
-    pass
+    search_result: str = Field(..., description="Raw search result text to format")
 
 
 # -----------------------------------------------------------------------------
-# CMR Search Agent (Free-form)
+# Private sub-agents
 # -----------------------------------------------------------------------------
 
 
-class CMRDataSearchCareAgent(OpenAIBaseAgent[CMRDataSearchCareAgentInputSchema, CMRDataSearchCareAgentOutputSchema]):
+class _CMRSearchAgent(OpenAIBaseAgent[_CMRSearchAgentInputSchema, _CMRSearchAgentOutputSchema]):
     """CMR Search Agent - free-form search using CARE methodology.
 
-    Internal helper for CMRDataSearchCareAgentCMRCareAgent pipeline.
-    Returns FreeFormOutput with unstructured search results.
+    Internal helper for CMRCareAgent pipeline.
+    Returns TextOutput with unstructured search results.
     """
 
-    input_schema = CMRDataSearchCareAgentInputSchema
-    output_schema = CMRDataSearchCareAgentOutputSchema
-    config_schema = CMRDataSearchCareAgentConfig
+    input_schema = _CMRSearchAgentInputSchema
+    output_schema = _CMRSearchAgentOutputSchema
 
 
-class CMROutputCareAgent(OpenAIBaseAgent[CMROutputCareAgentInputSchema, CMROutputCareAgentOutputSchema]):
+class _CMROutputAgent(OpenAIBaseAgent[_CMROutputAgentInputSchema, CMRCareAgentOutputSchema]):
+    """CMR Output Agent - formats free-form search results into structured output.
+
+    Internal helper for CMRCareAgent pipeline.
+    Returns CMRCareAgentOutputSchema with concept IDs and report.
     """
-    CMR Output Agent - using free-form search result, creates strucuted output.
-    Returns structured search results.
-    """
 
-    input_schema = CMROutputCareAgentInputSchema
-    output_schema = CMROutputCareAgentOutputSchema
-    config_schema = CMROutputCareAgentConfig
+    input_schema = _CMROutputAgentInputSchema
+    output_schema = CMRCareAgentOutputSchema
+
+
+# -----------------------------------------------------------------------------
+# CMR CARE Orchestrator Agent (Public)
+# -----------------------------------------------------------------------------
 
 
 class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSchema]):
+    """CMR CARE Agent - orchestrates search → format pipeline.
+
+    Public-facing agent for NASA dataset discovery using the
+    CARE (Clarify, Analyze, Rank, Explain) methodology.
+    """
+
     input_schema = CMRCareAgentInputSchema
     output_schema = CMRCareAgentOutputSchema
     config_schema = CMRCareConfig
 
-    async def _arun():
-        pass
+    def __init__(
+        self,
+        config: CMRCareConfig | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(config=config, **kwargs)
 
-    async def _astream():
-        pass
+        # Search agent: gets system_prompt, tools, model, reasoning from CMRCareConfig
+        search_config = OpenAIBaseAgentConfig(
+            system_prompt=self.config.system_prompt,
+            model_name=self.config.model_name,
+            reasoning_effort=self.config.reasoning_effort,
+            tools=self.config.tools,
+        )
+        # Formatter agent: own prompt, same model/reasoning, no tools
+        formatter_config = OpenAIBaseAgentConfig(
+            system_prompt=self.config.formatter_system_prompt,
+            model_name=self.config.model_name,
+            reasoning_effort=self.config.reasoning_effort,
+        )
+        self._search_agent = _CMRSearchAgent(config=search_config, debug=self.debug)
+        self._formatter_agent = _CMROutputAgent(config=formatter_config, debug=self.debug)
 
+    async def _astream(
+        self,
+        params: CMRCareAgentInputSchema,
+        run_context: RunContext | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamEvent]:
+        """Orchestrate: search agent → output formatter agent."""
+        class_name = self.__class__.__name__
+        run_context = (run_context or RunContext()).model_copy()
+        run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
 
-# Strucutred output agent
+        yield StartingEvent(
+            source=class_name,
+            message=f"Starting {class_name}",
+            data=StartingEventData(params=params),
+            run_context=run_context,
+        )
 
+        try:
+            # Step 1: Stream search agent
+            search_output = None
+            async for event in self._search_agent.astream(
+                _CMRSearchAgentInputSchema(query=params.query), run_context=run_context
+            ):
+                yield event
+                if isinstance(event, CompletedEvent):
+                    search_output = event.data.output
+                if isinstance(event, HumanInputRequiredEvent):
+                    return
 
-class CMRStrAgentInputSchema(InputSchema):
-    """Input schema for CMR CARE Agent."""
+            if not search_output or not search_output.content:
+                yield FailedEvent(
+                    source=class_name,
+                    message="Search returned no results",
+                    data=FailedEventData(error="Search returned no results", error_type="EmptySearchResult"),
+                    run_context=run_context,
+                )
+                return
 
-    query: str = Field(..., description="Earth science query for dataset discovery")
+            # Emit partial output with raw search results
+            PartialOutput = PartialModel[self.output_schema]
+            yield PartialOutputEvent(
+                source=class_name,
+                message="Search complete, formatting...",
+                data=PartialEventData(partial_output=PartialOutput(report=search_output.content)),
+                run_context=run_context,
+            )
 
+            # Step 2: Stream formatter agent
+            yield RunningEvent(
+                source=class_name,
+                message="Formatting output",
+                run_context=run_context,
+            )
 
-class CMRStrAgentOutputSchema(OutputSchema):
-    """Output schema for CMR CARE Agent."""
+            final_output = None
+            async for event in self._formatter_agent.astream(
+                _CMROutputAgentInputSchema(
+                    search_result=search_output.content
+                )  # avoid run context since this is a fresh agent run
+            ):
+                yield event
+                if isinstance(event, CompletedEvent):
+                    final_output = event.data.output
+            if final_output:
+                yield CompletedEvent(
+                    source=class_name,
+                    message=f"Completed {class_name}",
+                    data=CompletedEventData(output=final_output),
+                    run_context=run_context,
+                )
+            else:
+                yield FailedEvent(
+                    source=class_name,
+                    message="Formatter returned no output",
+                    data=FailedEventData(error="Formatter returned no output", error_type="EmptyFormatterResult"),
+                    run_context=run_context,
+                )
 
-    __response_field__ = "report"
-    dataset_concept_ids: list[str] = Field(..., description="List of dataset concept IDs")
-    report: str = Field(default="", description="Detailed report with reasoning")
-
-
-class CMRStrAgent(OpenAIBaseAgent):
-    """
-    CMR stragent
-    """
-
-    input_schema = CMRStrAgentInputSchema
-    output_schema = CMRStrAgentOutputSchema
+        except Exception as e:
+            yield FailedEvent(
+                source=class_name,
+                message=f"Failed: {e!s}",
+                data=FailedEventData(error=str(e), error_type=type(e).__name__),
+                run_context=run_context,
+            )
+            raise
 
 
 if __name__ == "__main__":
     import asyncio
 
     async def main():
-        # config = CMRCareConfig()
-        # agent = CMRCareAgent(config=config)
-
-        config = CMRDataSearchCareAgentConfig()
-        agent = CMRDataSearchCareAgent(config=config)
-        # agent = CMRStrAgent(config=config)
-
+        agent = CMRCareAgent(CMRCareConfig(debug=True))
         question = "Can you find me datasets about sea ice?"
 
-        async for event in agent.astream(
-            CMRDataSearchCareAgentInputSchema(query=question),
-            # CMRStrAgentInputSchema(query=question),
-        ):
+        async for event in agent.astream(CMRCareAgentInputSchema(query=question)):
             print(event)
-            # continue
 
     asyncio.run(main())
