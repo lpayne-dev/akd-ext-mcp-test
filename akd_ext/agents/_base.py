@@ -21,7 +21,6 @@ from akd._base import (
     StartingEvent,
     StartingEventData,
     RunningEvent,
-    RunningEventData,
     StreamingTokenEvent,
     StreamingEventData,
     ThinkingEvent,
@@ -461,41 +460,61 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         )
 
         try:
-            yield RunningEvent(
-                source=class_name,
-                message=f"Running {class_name}",
-                data=RunningEventData(),
+            async with self.memory.asession(
+                stateless=self.stateless,
                 run_context=run_context,
-            )
+                enable_trimming=self.enable_trimming,
+                model_name=self.model_name,
+                max_tokens=self.max_tokens,
+                trim_ratio=self.trim_ratio,
+            ) as messages:
+                # Add system message if empty
+                if not messages:
+                    messages.append(self._default_system_message)
 
-            final_output = None
-            # interact with the LLM and yield events
-            async for event in self._stream_llm_response(messages=self.memory, token_batch_size=token_batch_size):
-                if isinstance(event, CompletedEvent):
-                    final_output = event.data.output
-                yield event
-                if isinstance(event, HumanInputRequiredEvent):
-                    # ask the human for input and interrupt the stream
-                    return
+                # because human response run context messages handled by _stream_llm_response
+                if params and not (run_context and run_context.human_response):
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": params.model_dump_json(exclude={"type"}),
+                        },
+                    )
 
-            if final_output is None:
-                raise UnexpectedModelBehavior("No output received from LLM")
+                yield RunningEvent(
+                    source=class_name,
+                    message=f"Running {class_name}",
+                    run_context=run_context,
+                )
 
-            self.memory.append({"role": "assistant", "content": final_output.model_dump_json(exclude={"type"})})
+                final_output = None
+                # interact with the LLM and yield events
+                async for event in self._stream_llm_response(messages=messages, token_batch_size=token_batch_size):
+                    if isinstance(event, CompletedEvent):
+                        final_output = event.data.output
+                    yield event
+                    if isinstance(event, HumanInputRequiredEvent):
+                        # ask the human for input and interrupt the stream
+                        return
 
-            # final_output may already be parsed model or JSON string
-            if isinstance(final_output, response_model):
-                output = final_output
-            elif isinstance(final_output, str):
-                output = response_model.model_validate_json(final_output)
-            else:
-                output = response_model.model_validate(final_output)
-            yield CompletedEvent(
-                source=class_name,
-                message=f"Completed {class_name}",
-                data=CompletedEventData[self.output_schema](output=output),
-                run_context=run_context,
-            )
+                if final_output is None:
+                    raise UnexpectedModelBehavior("No output received from LLM")
+
+                messages.append({"role": "assistant", "content": final_output.model_dump_json(exclude={"type"})})
+
+                # final_output may already be parsed model or JSON string
+                if isinstance(final_output, response_model):
+                    output = final_output
+                elif isinstance(final_output, str):
+                    output = response_model.model_validate_json(final_output)
+                else:
+                    output = response_model.model_validate(final_output)
+                yield CompletedEvent(
+                    source=class_name,
+                    message=f"Completed {class_name}",
+                    data=CompletedEventData[self.output_schema](output=output),
+                    run_context=run_context,
+                )
 
         except Exception as e:
             yield FailedEvent(
