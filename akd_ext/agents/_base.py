@@ -18,6 +18,7 @@ from pydantic import Field
 from akd._base import (
     InputSchema,
     OutputSchema,
+    StreamEventType,
     StartingEvent,
     StartingEventData,
     RunningEvent,
@@ -247,7 +248,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         self,
         messages: list[dict[str, Any]],
         run_context: RunContext,
-        response_model: type[OutSchema] | None = None,
         token_batch_size: int = 10,
     ) -> AsyncIterator[StreamEvent]:
         """Stream using Runner.run_streamed()."""
@@ -471,7 +471,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         """Stream execution with akd StreamEvent format."""
 
         class_name = self.__class__.__name__
-        response_model = self.output_schema
         run_context = (run_context or RunContext()).model_copy()
         if "run_id" not in run_context:
             run_context["run_id"] = uuid.uuid4().hex[:8]
@@ -526,20 +525,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
                 messages.append({"role": "assistant", "content": final_output.model_dump_json(exclude={"type"})})
 
-                # final_output may already be parsed model or JSON string
-                if isinstance(final_output, response_model):
-                    output = final_output
-                elif isinstance(final_output, str):
-                    output = response_model.model_validate_json(final_output)
-                else:
-                    output = response_model.model_validate(final_output)
-                yield CompletedEvent(
-                    source=class_name,
-                    message=f"Completed {class_name}",
-                    data=CompletedEventData[self.output_schema](output=output),
-                    run_context=run_context,
-                )
-
         except Exception as e:
             yield FailedEvent(
                 source=class_name,
@@ -548,3 +533,43 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 run_context=run_context,
             )
             raise
+
+    # TODO: check if this is need at all
+    async def astream(
+        self,
+        params: Any,
+        run_context: RunContext | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamEvent]:
+        """
+        Overriding the BaseAgent astream to include possible return formats from OpenAI SDK
+        """
+        # Input validation (before any events are yielded)
+        params = self._validate_input(params)
+
+        # Stream from internal implementation
+        async for event in self._astream(params, run_context, **kwargs):
+            if event.event_type == StreamEventType.COMPLETED:
+                # Validate output before yielding COMPLETED
+                event_output = event.output
+                response_model = self.output_schema
+                output: response_model | None = None
+
+                # possible return formats from OpenAI SDK result
+                if isinstance(event_output, response_model):
+                    output = event_output
+                elif isinstance(event_output, str):
+                    output = response_model.model_validate_json(event_output)
+                else:
+                    output = response_model.model_validate(event_output)
+
+                if output is not None:
+                    output = self._validate_output(output)
+                    yield CompletedEvent(
+                        source=event.source,
+                        message=event.message,
+                        data=CompletedEventData(output=output),
+                        run_context=event.run_context,
+                    )
+                    continue
+            yield event
