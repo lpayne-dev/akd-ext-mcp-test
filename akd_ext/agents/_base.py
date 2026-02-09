@@ -40,6 +40,7 @@ from akd._base import (
     HumanResponseEventData,
     HumanInputRequiredEvent,
     HumanInputRequiredEventData,
+    RunContext,
 )
 from akd.agents._base import BaseAgent, BaseAgentConfig
 from akd.tools.human import HumanToolInput
@@ -230,10 +231,13 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
     async def _stream_llm_response(
         self,
         messages: list[dict[str, Any]],
+        context: RunContext | None = None,
         token_batch_size: int = 10,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncIterator[StreamEvent]:
         """Stream using Runner.run_streamed()."""
 
+        class_name = self.__class__.__name__
+        run_context = context or {"run_id": uuid.uuid4().hex[:8]}
         token_buffer = ""
 
         stream = Runner.run_streamed(
@@ -250,18 +254,37 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                     delta = getattr(event.data, "delta", "") or ""
                     token_buffer += delta
                     if len(token_buffer) >= token_batch_size:
-                        yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                        # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                        yield StreamingTokenEvent(
+                            source=class_name,
+                            message=f"Streaming {class_name}",
+                            data=StreamingEventData(token=token_buffer),
+                            run_context=run_context,
+                        )
+
                         token_buffer = ""
 
                 elif event_type == "response.output_text.done":
                     if token_buffer:
-                        yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                        # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                        yield StreamingTokenEvent(
+                            source=class_name,
+                            message=f"Streaming {class_name}",
+                            data=StreamingEventData(token=token_buffer),
+                            run_context=run_context,
+                        )
                         token_buffer = ""
 
                 elif "reasoning" in event_type:
                     content = getattr(event.data, "content", "") or getattr(event.data, "delta", "") or ""
                     if content:
-                        yield {"type": StreamEventType.THINKING, "content": content}
+                        yield ThinkingEvent(
+                            source=class_name,
+                            message="Reasoning...",
+                            data=ThinkingEventData(thinking_content=content),
+                            run_context=run_context,
+                        )
+                        # yield {"type": StreamEventType.THINKING, "content": content}
 
             elif isinstance(event, RunItemStreamEvent):
                 if event.name == "tool_called":
@@ -271,27 +294,64 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                         tool_input = getattr(raw_item, "arguments", "{}")
                         tool_output = getattr(raw_item, "output", None)
 
-                        yield {
-                            "type": StreamEventType.TOOL_CALLING,
-                            "tool_name": tool_name,
-                            "tool_input": tool_input,
-                        }
+                        yield ToolCallingEvent(
+                            source=class_name,
+                            message=f"Calling tool: {tool_name}",
+                            data=ToolCallingEventData(
+                                tool_call=ToolCall(
+                                    tool_call_id=uuid.uuid4().hex[:8],
+                                    tool_name=tool_name,
+                                    arguments=tool_input,
+                                )
+                            ),
+                            run_context=run_context,
+                        )
+
+                        # yield {
+                        #     "type": StreamEventType.TOOL_CALLING,
+                        #     "tool_name": tool_name,
+                        #     "tool_input": tool_input,
+                        # }
 
                         if tool_output:
-                            yield {
-                                "type": StreamEventType.TOOL_RESULT,
-                                "tool_name": tool_name,
-                                "tool_output": tool_output,
-                            }
+                            yield ToolResultEvent(
+                                source=class_name,
+                                message=f"Tool result: {tool_name}",
+                                data=ToolResultEventData(
+                                    result=ToolResult(
+                                        tool_call_id=uuid.uuid4().hex[:8],
+                                        tool_name=tool_name,
+                                        content=tool_output,
+                                    )
+                                ),
+                                run_context=run_context,
+                            )
+                            # yield {
+                            #     "type": StreamEventType.TOOL_RESULT,
+                            #     "tool_name": tool_name,
+                            #     "tool_output": tool_output,
+                            # }
 
                 elif event.name == "message_output_created":
                     if token_buffer:
-                        yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                        yield StreamingTokenEvent(
+                            source=class_name,
+                            message=f"Streaming {class_name}",
+                            data=StreamingEventData(token=token_buffer),
+                            run_context=run_context,
+                        )
+                        # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
                         token_buffer = ""
 
         final_output = stream.final_output_as(self.output_schema, raise_if_incorrect_type=False)
         if final_output:
-            yield {"type": StreamEventType.COMPLETED, "output": final_output}
+            yield CompletedEvent(
+                source=class_name,
+                message=f"Completed {class_name}",
+                data=CompletedEventData[self.output_schema](output=final_output),
+                run_context=run_context,
+            )
+            # yield {"type": StreamEventType.COMPLETED, "output": final_output}
 
     async def _astream(
         self,
@@ -315,6 +375,24 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         if "run_id" not in run_context:
             run_context["run_id"] = uuid.uuid4().hex[:8]
 
+        if run_context.get("human_response"):
+            content = run_context.get("human_response").content
+            self._memory.append(
+                {
+                    "role": "user",
+                    "content": content if isinstance(content, str) else json.dumps(content),
+                },
+            )
+            yield HumanResponseEvent(
+                source=class_name,
+                message="Resumed with human input",
+                data=HumanResponseEventData(
+                    tool_call_id=run_context.human_response.tool_call_id,
+                    response=content,
+                ),
+                run_context=run_context,
+            )
+
         yield StartingEvent(
             source=class_name,
             message=f"Starting {class_name}",
@@ -331,64 +409,46 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
             )
 
             final_output = None
-            async for chunk in self._stream_llm_response(messages=self._memory, token_batch_size=token_batch_size):
-                if chunk["type"] == StreamEventType.STREAMING:
-                    yield StreamingTokenEvent(
-                        source=class_name,
-                        message=f"Streaming {class_name}",
-                        data=StreamingEventData(token=chunk["token"]),
-                        run_context=run_context,
+            # interact with the LLM and yield events
+            async for event in self._stream_llm_response(messages=self._memory, token_batch_size=token_batch_size):
+                if (
+                    isinstance(event, ToolCallingEvent) and event.data.tool_call.tool_name == "ask_human"
+                ):  # TODO: what if tool_name is not ask_human and it was modified?
+                    # Store messages in run_context for resumption
+                    run_context["messages"] = list(self._memory) if self._memory else []
+                    run_context["messages"].append(
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": {
+                                "id": event.data.tool_call.tool_call_id,
+                                "type": "function",
+                                "function": {"name": event.data.tool_call.tool_name, "arguments": event.data.arguments},
+                            },
+                        },
                     )
 
-                elif chunk["type"] == StreamEventType.THINKING:
-                    yield ThinkingEvent(
+                    # Yield HUMAN_INPUT_REQUIRED with full state for resumption
+                    yield HumanInputRequiredEvent(
                         source=class_name,
-                        message="Reasoning...",
-                        data=ThinkingEventData(
-                            thinking_content=chunk["content"]
-                        ),  # check if reflection prompt is used and add reflection_content
-                        run_context=run_context,
-                    )
-
-                elif chunk["type"] == StreamEventType.TOOL_CALLING:
-                    # Parse tool_input if it's a JSON string
-                    tool_args = chunk["tool_input"]
-                    if isinstance(tool_args, str):
-                        try:
-                            tool_args = json.loads(tool_args)
-                        except json.JSONDecodeError:
-                            tool_args = {}
-
-                    yield ToolCallingEvent(
-                        source=class_name,
-                        message=f"Calling tool: {chunk['tool_name']}",
-                        data=ToolCallingEventData(
-                            tool_call=ToolCall(
-                                tool_call_id=chunk.get("tool_call_id")
-                                or uuid.uuid4().hex[:8],  # does chunk have a tool call id??
-                                tool_name=chunk["tool_name"],
-                                arguments=tool_args,
-                            )
+                        message=f"Human input required: {event.data.tool_call.arguments.get('question', 'Input needed')}",
+                        data=HumanInputRequiredEventData(
+                            human_input=HumanToolInput(
+                                question=event.data.tool_call.arguments.get("question", "Input needed"),
+                            ),
+                            tool_call_id=event.data.tool_call.tool_call_id,
+                            tool_name=event.data.tool_call.tool_name,
+                            arguments=event.data.tool_call.arguments,
                         ),
                         run_context=run_context,
                     )
 
-                elif chunk["type"] == StreamEventType.TOOL_RESULT:
-                    yield ToolResultEvent(
-                        source=class_name,
-                        message=f"Tool result: {chunk['tool_name']}",
-                        data=ToolResultEventData(
-                            result=ToolResult(
-                                tool_call_id=chunk.get("tool_call_id") or uuid.uuid4().hex[:8],
-                                tool_name=chunk["tool_name"],
-                                content=chunk["tool_output"],
-                            )
-                        ),
-                        run_context=run_context,
-                    )
+                    # ask the human for input and interrupt the stream
+                    return
 
-                elif chunk["type"] == StreamEventType.COMPLETED:
-                    final_output = chunk["output"]
+                if isinstance(event, CompletedEvent):
+                    final_output = event.data.output
+                yield event
 
             if final_output is None:
                 raise ValueError("No output received from LLM")
