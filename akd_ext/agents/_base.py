@@ -41,6 +41,8 @@ from akd._base import (
     HumanInputRequiredEvent,
     HumanInputRequiredEventData,
     RunContext,
+    PartialOutputEvent,
+    PartialEventData,
 )
 from akd.agents._base import BaseAgent, BaseAgentConfig
 from akd.tools.human import HumanToolInput
@@ -48,6 +50,8 @@ from akd.tools.human import HumanToolInput
 from akd._base.errors import (
     UnexpectedModelBehavior,
 )
+
+from akd.utils import PartialModel
 
 
 class OpenAIBaseAgentConfig(BaseAgentConfig):
@@ -184,6 +188,13 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
             model_settings=self.config.model_settings,
         )
 
+    def _try_parse_json(self, content: str) -> dict[str, Any] | None:
+        """Try to parse content as JSON."""
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return None
+
     async def get_response_async(
         self,
         messages: list[dict[str, Any]] | None = None,
@@ -261,7 +272,14 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 run_context=run_context,
             )
 
+        # For partial output validation (only for final answer)
+        PartialResponseModel = PartialModel[self.output_schema]
+
+        # LLM Call
+        accumulated = ""
         token_buffer = ""
+        last_partial_dict = None
+
         stream = Runner.run_streamed(
             self._agent,
             input=messages,
@@ -274,7 +292,9 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
                 if event_type == "response.output_text.delta":
                     delta = getattr(event.data, "delta", "") or ""
+
                     token_buffer += delta
+                    accumulated += delta
                     if len(token_buffer) >= token_batch_size:
                         # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
                         yield StreamingTokenEvent(
@@ -285,6 +305,20 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                         )
 
                         token_buffer = ""
+
+                    parsed = self._try_parse_json(accumulated)
+                    if parsed and parsed != last_partial_dict:
+                        last_partial_dict = parsed
+                        try:
+                            partial = PartialResponseModel.model_validate(parsed)
+                            yield PartialOutputEvent(
+                                source=class_name,
+                                message="Partial...",
+                                data=PartialEventData(partial_output=partial),
+                                run_context=run_context,
+                            )
+                        except Exception:
+                            pass
 
                 elif event_type == "response.output_text.done":
                     if token_buffer:
@@ -357,7 +391,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                                 message=f"Tool result: {tool_name}",
                                 data=ToolResultEventData(
                                     result=ToolResult(
-                                        tool_call_id=uuid.uuid4().hex[:8],
+                                        tool_call_id=tool_call_id,
                                         tool_name=tool_name,
                                         content=tool_output,
                                     )
