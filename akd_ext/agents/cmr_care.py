@@ -5,8 +5,6 @@ for transparent, reproducible discovery of NASA Earthdata datasets.
 
 Public API:
     CMRCareAgent, CMRCareAgentInputSchema, CMRCareAgentOutputSchema, CMRCareConfig
-
-Co-Authored-By: Sanjog Thapa <sanzog03@gmail.com>
 """
 
 from __future__ import annotations
@@ -545,10 +543,10 @@ class _CMROutputAgent(OpenAIBaseAgent[_CMROutputAgentInputSchema, CMRCareAgentOu
 
 
 class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSchema]):
-    """CMR CARE Agent - orchestrates search → format pipeline.
+    """Earth Science Data Search Agent that uses NASA CMR.
+    Uses NASA in-house CARE-driven process (https://github.com/NASA-IMPACT/CARE-Code-Agent-ES)
+    CARE: Collaborative Agent Reasoning Engineering.
 
-    Public-facing agent for NASA dataset discovery using the
-    CARE (Clarify, Analyze, Rank, Explain) methodology.
     """
 
     input_schema = CMRCareAgentInputSchema
