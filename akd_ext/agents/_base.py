@@ -279,6 +279,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         accumulated = ""
         token_buffer = ""
         last_partial_dict = None
+        tool_calls_for_message: list[dict[str, Any]] = []  # message history of tool calls.
 
         stream = Runner.run_streamed(
             self._agent,
@@ -351,6 +352,13 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                         tool_output = getattr(raw_item, "output", None)
                         tool_call_id = getattr(raw_item, "id", uuid.uuid4().hex[:8])
 
+                        tool_calls_for_message.append(
+                            {
+                                "id": tool_call_id,
+                                "type": "function",  # TODO: check if other types available via raw_item
+                                "function": {"name": tool_name, "arguments": tool_input},
+                            }
+                        )
                         yield ToolCallingEvent(
                             source=class_name,
                             message=f"Calling tool: {tool_name}",
@@ -371,6 +379,13 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                                 human_input = HumanToolInput(question=tool_input.get("question", "Input needed"))
 
                             # Yield HUMAN_INPUT_REQUIRED with full state for resumption
+                            messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": accumulated or None,
+                                    "tool_calls": tool_calls_for_message,
+                                }
+                            )
                             run_context.messages = list(messages)
                             yield HumanInputRequiredEvent(
                                 source=class_name,
@@ -386,6 +401,13 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                             return
 
                         if tool_output:
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_call_id,
+                                    "content": tool_output,
+                                }
+                            )
                             yield ToolResultEvent(
                                 source=class_name,
                                 message=f"Tool result: {tool_name}",
@@ -417,6 +439,13 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
         final_output = stream.final_output_as(self.output_schema, raise_if_incorrect_type=False)
         if final_output:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": accumulated or None,
+                    "tool_calls": tool_calls_for_message,
+                }
+            )
             yield CompletedEvent(
                 source=class_name,
                 message=f"Completed {class_name}",
@@ -424,6 +453,8 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 run_context=run_context,
             )
             # yield {"type": StreamEventType.COMPLETED, "output": final_output}
+
+        # TODO: Check how to add reflection_prompt to the Runner after the output is generated.
 
     async def _astream(
         self,
