@@ -198,31 +198,46 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 run_config=self.config.run_config,
             )
 
-    async def _arun(self, params: InSchema, **kwargs) -> OutSchema:
+    async def _arun(self, params: InSchema, run_context: dict[str, Any] | None = None, **kwargs) -> OutSchema:
         """Run the agent workflow.
 
         Override for custom orchestration (e.g., multi-agent pipelines).
         """
-        if self.config.stateless:
-            self.memory.clear()
+        async with self.memory.asession(
+            stateless=self.stateless,
+            run_context=run_context,
+            enable_trimming=self.enable_trimming,
+            model_name=self.model_name,
+            max_tokens=self.max_tokens,
+            trim_ratio=self.trim_ratio,
+        ) as messages:
+            if not messages:
+                messages.append(self._default_system_message())
 
-        # Add user input to memory
-        self.memory.append({"role": "user", "content": params.model_dump_json()})
+            # because human response run context messages handled by _stream_llm_response
+            if params and not (run_context and run_context.human_response):
+                messages.append({"role": "user", "content": params.model_dump_json()})
 
-        # Run pipeline via get_response_async
-        result = await self.get_response_async(messages=self.memory)
+            # Run pipeline via get_response_async
+            result = await self.get_response_async(messages=messages)
 
-        # Update memory with full conversation
-        self.memory = result.to_input_list()
+            # Return typed output
+            final_output = result.final_output
 
-        # Return typed output
-        final_output = result.final_output
-        if isinstance(final_output, self.output_schema):
-            return final_output
-        elif hasattr(final_output, "model_dump"):
-            return self.output_schema(**final_output.model_dump())
-        else:
-            return self.output_schema.model_validate_json(str(final_output))
+            # add final assistant response message
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": final_output.model_dump_json(exclude={"type"}),
+                }
+            )
+
+            if isinstance(final_output, self.output_schema):
+                return final_output
+            elif hasattr(final_output, "model_dump"):
+                return self.output_schema(**final_output.model_dump())
+            else:
+                return self.output_schema.model_validate_json(str(final_output))
 
     async def _stream_llm_response(
         self,
@@ -470,7 +485,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
             ) as messages:
                 # Add system message if empty
                 if not messages:
-                    messages.append(self._default_system_message)
+                    messages.append(self._default_system_message())
 
                 # because human response run context messages handled by _stream_llm_response
                 if params and not (run_context and run_context.human_response):
