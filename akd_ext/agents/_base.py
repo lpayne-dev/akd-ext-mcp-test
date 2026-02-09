@@ -52,6 +52,7 @@ from akd._base.errors import (
 )
 
 from akd.utils import PartialModel
+from litellm.utils import trim_messages
 
 
 class OpenAIBaseAgentConfig(BaseAgentConfig):
@@ -178,7 +179,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
     async def get_response_async(
         self,
-        messages: list[dict[str, Any]] | None = None,
+        messages: list[dict[str, Any]],
         **kwargs,
     ) -> Any:
         """Run the agent and return the RunResult.
@@ -189,12 +190,15 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         Returns:
             RunResult from the agent execution.
         """
-        agent_input = messages if messages is not None else self.memory
+        if self.enable_trimming:
+            messages = trim_messages(
+                messages, model=self.model_name, max_tokens=self.max_tokens, trim_ratio=self.trim_ratio
+            )
 
         with trace(self.__class__.__name__):
             return await Runner.run(
                 self._agent,
-                input=agent_input,
+                input=messages,
                 run_config=self.config.run_config,
             )
 
@@ -250,6 +254,11 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
         class_name = self.__class__.__name__
         run_context.messages = messages
+
+        if self.enable_trimming:
+            messages = trim_messages(
+                messages, model=self.model_name, max_tokens=self.max_tokens, trim_ratio=self.trim_ratio
+            )
 
         # check for human response
         human_response = run_context.human_response
