@@ -11,6 +11,8 @@ from agents.stream_events import (
     RunItemStreamEvent,
 )
 
+from loguru import logger
+
 from akd._base.streaming import StreamEvent, StreamingMixin
 from openai.types.shared.reasoning import Reasoning
 from pydantic import Field
@@ -289,6 +291,12 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         )
 
         async for event in stream.stream_events():
+            if self.debug:
+                if isinstance(event, RawResponsesStreamEvent):
+                    logger.debug(f"[{class_name}] RawEvent: {getattr(event.data, 'type', 'unknown')}")
+                elif isinstance(event, RunItemStreamEvent):
+                    logger.debug(f"[{class_name}] RunItemEvent: {event.name}")
+
             if isinstance(event, RawResponsesStreamEvent):
                 event_type = getattr(event.data, "type", "")
 
@@ -322,8 +330,11 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                             pass
 
                 elif event_type == "response.output_text.done":
+                    # ResponseTextDoneEvent.text has the complete text for this output part
+                    done_text = getattr(event.data, "text", "") or ""
+                    if done_text and not accumulated:
+                        accumulated = done_text
                     if token_buffer:
-                        # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
                         yield StreamingTokenEvent(
                             source=class_name,
                             message=f"Streaming {class_name}",
@@ -350,7 +361,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                         tool_name = getattr(raw_item, "name", "")
                         tool_input_raw = getattr(raw_item, "arguments", "{}")
                         tool_input = json.loads(tool_input_raw) if isinstance(tool_input_raw, str) else tool_input_raw
-                        tool_output = getattr(raw_item, "output", None)
                         tool_call_id = getattr(raw_item, "id", uuid.uuid4().hex[:8])
 
                         # Parse JSON string arguments into dict for ToolCall
@@ -403,31 +413,23 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                             # End generator gracefully, replicating an interruption to HumanToolInput
                             return
 
-                        if tool_output:
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tool_call_id,
-                                    "content": tool_output,
-                                }
-                            )
-                            yield ToolResultEvent(
-                                source=class_name,
-                                message=f"Tool result: {tool_name}",
-                                data=ToolResultEventData(
-                                    result=ToolResult(
-                                        tool_call_id=tool_call_id,
-                                        tool_name=tool_name,
-                                        content=tool_output,
-                                    )
-                                ),
-                                run_context=run_context,
-                            )
-                            # yield {
-                            #     "type": StreamEventType.TOOL_RESULT,
-                            #     "tool_name": tool_name,
-                            #     "tool_output": tool_output,
-                            # }
+                elif event.name == "tool_output":
+                    raw_item = getattr(event.item, "raw_item", None)
+                    tool_output_content = getattr(event.item, "output", None)
+                    tool_call_id = getattr(raw_item, "call_id", "") or uuid.uuid4().hex[:8]
+                    if tool_output_content is not None:
+                        yield ToolResultEvent(
+                            source=class_name,
+                            message="Tool result",
+                            data=ToolResultEventData(
+                                result=ToolResult(
+                                    tool_call_id=tool_call_id,
+                                    tool_name=getattr(raw_item, "name", "unknown"),
+                                    content=tool_output_content,
+                                )
+                            ),
+                            run_context=run_context,
+                        )
 
                 elif event.name == "message_output_created":
                     if token_buffer:
@@ -440,8 +442,17 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                         # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
                         token_buffer = ""
 
+        if self.debug:
+            logger.debug(
+                f"[{class_name}] accumulated={len(accumulated)} chars, "
+                f"stream.final_output={type(stream.final_output).__name__}"
+            )
+
         if issubclass(self.output_schema, TextOutput):
-            final_output = self.output_schema(content=accumulated)
+            content = accumulated
+            if not content and isinstance(stream.final_output, str):
+                content = stream.final_output
+            final_output = self.output_schema(content=content)
         else:
             final_output = stream.final_output_as(self.output_schema, raise_if_incorrect_type=False)
 
@@ -526,8 +537,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
                 if final_output is None:
                     raise UnexpectedModelBehavior("No output received from LLM")
-
-                messages.append({"role": "assistant", "content": final_output.model_dump_json(exclude={"type"})})
 
         except Exception as e:
             yield FailedEvent(
