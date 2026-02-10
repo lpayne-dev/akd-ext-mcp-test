@@ -5,7 +5,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from agents import Agent, ModelSettings, RunConfig, Runner, trace
+from agents import Agent, ModelSettings, RunConfig, Runner, trace, Tool as OpenAITool
 from agents.stream_events import (
     RawResponsesStreamEvent,
     RunItemStreamEvent,
@@ -14,6 +14,7 @@ from agents.stream_events import (
 from loguru import logger
 
 from akd._base.streaming import StreamEvent, StreamingMixin
+from akd.tools._base import BaseTool as AKDTool
 from openai.types.shared.reasoning import Reasoning
 from pydantic import Field
 
@@ -76,7 +77,7 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
         default=False,
         description="Whether to maintain conversation history. False = stateful (default for OpenAI agents).",
     )
-    tools: list[Any] = Field(
+    tools: list[OpenAITool | AKDTool] = Field(
         default_factory=list,
         description="Tools for the agent (FunctionTool, HostedMCPTool, WebSearchTool, etc.)",
     )
