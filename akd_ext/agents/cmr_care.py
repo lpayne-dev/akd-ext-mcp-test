@@ -631,6 +631,10 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
                     # Don't forward sub-agent CompletedEvent (wrong output type for orchestrator)
                     if isinstance(event, CompletedEvent):
                         search_output = event.data.output
+                        # Merge sub-agent's intermediate messages (tool calls/results) into orchestrator
+                        for msg in event.run_context.messages or []:
+                            if msg.get("role") in ("assistant", "tool"):
+                                messages.append(msg)
                         yield PartialOutputEvent(
                             source=class_name,
                             message="Search completed, received output",
