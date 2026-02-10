@@ -39,6 +39,9 @@ from akd_ext.agents._base import (
     OpenAIBaseAgent,
     OpenAIBaseAgentConfig,
 )
+from akd.tools.human import HumanTool
+from agents import function_tool
+from akd_ext.mcp.converter import tool_converter
 
 
 # -----------------------------------------------------------------------------
@@ -449,7 +452,7 @@ def _default_cmr_tools() -> list[Any]:
                     "https://w4hu71445m.execute-api.us-east-1.amazonaws.com/mcp/cmr/mcp",
                 ),
             }
-        ),
+        ),function_tool(tool_converter(HumanTool()))
     ]
 
 
