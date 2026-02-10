@@ -85,9 +85,9 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
         default=False,
         description="Whether to maintain conversation history. False = stateful (default for OpenAI agents).",
     )
-    tools: list[Any | AKDTool] = Field(
+    tools: list[Any] = Field(
         default_factory=list,
-        description="Tools for the agent (OpenAITool, AKDTool — AKDTools auto-converted to FunctionTool).",
+        description="Tools for the agent (OpenAITool, AKDTool(akd.tools._base.BaseTool) — AKDTools auto-converted to FunctionTool).",
     )
     tracing_params: dict[str, Any] = Field(
         default_factory=dict,

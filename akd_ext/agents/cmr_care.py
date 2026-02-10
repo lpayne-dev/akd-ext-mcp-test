@@ -17,6 +17,8 @@ from typing import Any, Literal
 from agents import HostedMCPTool
 from pydantic import Field
 
+from akd_ext._types import OpenAITool
+
 from akd._base import (
     InputSchema,
     OutputSchema,
@@ -430,7 +432,7 @@ _OUTPUT_AGENT_PROMPT = """Get the ranked list of outputs from the previous respo
 # -----------------------------------------------------------------------------
 
 
-def _default_cmr_tools() -> list[Any]:
+def get_default_cmr_tools() -> list[OpenAITool]:
     """Default CMR MCP tools. Uses CMR_MCP_URL env var if set."""
     return [
         HostedMCPTool(
@@ -464,7 +466,7 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
     system_prompt: str = Field(default=CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
-    tools: list[Any] = Field(default_factory=_default_cmr_tools)
+    tools: list[Any] = Field(default_factory=get_default_cmr_tools)
     formatter_system_prompt: str = Field(default=_OUTPUT_AGENT_PROMPT)
 
 
