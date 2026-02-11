@@ -488,6 +488,8 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                                 }
                             )
                             run_context.messages = list(messages)
+                            # Cancel the Runner to prevent background tool execution and retry loop
+                            stream.cancel()
                             yield HumanInputRequiredEvent(
                                 source=class_name,
                                 message=f"Human input required: {tool_input.get('question', 'Input needed')}",
