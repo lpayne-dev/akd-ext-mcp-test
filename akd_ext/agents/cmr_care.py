@@ -618,6 +618,9 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
                 if not messages:
                     messages.append(self._default_system_message())
 
+                if params and not (run_context and run_context.human_response):
+                    messages.append({"role": "user", "content": params.model_dump_json(exclude={"type"})})
+
                 run_context.messages = messages
 
                 yield RunningEvent(
