@@ -78,12 +78,6 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     Google Scholar as a last resort.
     Earthdata Search Web App — link handoff only (no API calls)
 
-    HUMAN INTERACTION
-    When you need clarification, confirmation, or any missing information from the user,
-    you MUST use your available tools to ask them. Never output questions as text in your
-    response — always request human input through a tool call. Do not proceed with searches
-    until the human has provided the required inputs.
-
     CONSTRAINTS & STYLE RULES
     Non-Negotiable Guardrails You must never:
     Recommend, select, or endorse datasets
