@@ -181,6 +181,34 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         super().__init__(config=config, memory=memory, debug=debug)
         self._agent = self._create_agent()
 
+    def _post_init(self) -> None:
+        """
+        Post-initialization hook to perform any additional setup after
+        the instance has been initialized.
+        This can be overridden by subclasses for custom behavior.
+
+        Note: Config properties are created by AbstractBaseMeta at class definition time,
+        not during instance initialization.
+        """
+        super()._post_init()
+        self._hil_system_prompt = ""
+        if self.tools and any(getattr(t, "name", None) == "ask_human" for t in self.tools):
+            # if human tool is there, add to system prompt to ask human too
+            self._hil_system_prompt = """
+
+            HUMAN INTERACTION
+            When you need clarification, confirmation, or any missing information from the user,
+            you CAN use your available tools to ask them.
+
+            """
+
+    def _default_system_message(self) -> dict[str, str]:
+        """Return default system message."""
+        return {
+            "role": "system",
+            "content": self._system_prompt + self._hil_system_prompt,
+        }
+
     def _create_agent(self) -> Agent:
         """Create the OpenAI Agent object.
 
