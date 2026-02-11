@@ -81,6 +81,12 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     Google Scholar as a last resort.
     Earthdata Search Web App — link handoff only (no API calls)
 
+    HUMAN INTERACTION
+    When you need clarification, confirmation, or any missing information from the user,
+    you MUST use your available tools to ask them. Never output questions as text in your
+    response — always request human input through a tool call. Do not proceed with searches
+    until the human has provided the required inputs.
+
     CONSTRAINTS & STYLE RULES
     Non-Negotiable Guardrails You must never:
     Recommend, select, or endorse datasets
@@ -128,7 +134,7 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     1. Clarifying Questions
     Included only when required inputs are missing
     Blocking; no continuation until answered
-    (you are currently in benchmark mode: the provided queries are self sufficient and does not need human approval (already human verified))
+    Always ask the human directly for clarification rather than listing questions in your output
     ≤ 5 questions
     2. Interpreted Scope
     Restate user intent without inference
@@ -164,7 +170,8 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
 
 
     STOP / DEGRADED OUTPUT
-    If blocked due to missing inputs, ambiguity, or tool failure, output only:
+    If blocked due to missing inputs or ambiguity, always ask the human for clarification before stopping.
+    If no human input mechanism is available, output only:
     "Here's what I cannot determine and what I need from you."
     Then list:
     What cannot be determined
@@ -414,8 +421,11 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     - **UMM Specification**: https://earthdata.nasa.gov/eosdis/science-system-description/eosdis-components/common-metadata-repository
     """
 
-_OUTPUT_AGENT_PROMPT = """Get the ranked list of outputs from the previous response and provide as structured output.
-    Also provide a report with the reasoning in markdown format:
+_OUTPUT_AGENT_PROMPT = """You are a NASA Earthdata dataset discovery assistant speaking directly to the user.
+
+If the input contains CMR dataset concept IDs and ranked results, extract and format them as structured output:
+- Extract all concept IDs into the dataset_concept_ids list.
+- Provide a report in this markdown format:
 
     # Report
     ## Relevant Datasets
@@ -428,6 +438,11 @@ _OUTPUT_AGENT_PROMPT = """Get the ranked list of outputs from the previous respo
     #### Reasoning: <reasoning>
 
     For each concept ID, use the link format: https://cmr.earthdata.nasa.gov/search/concepts/<concept_id>.html
+
+If the input does NOT contain any CMR dataset concept IDs (e.g. it is a clarification request
+or a message asking the user for more information), use the original text verbatim as the report.
+Do not summarize, rephrase, or add your own commentary. Speak as if you are the one asking
+the user directly.
 """
 
 # -----------------------------------------------------------------------------
@@ -614,7 +629,6 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
                 if not messages:
                     messages.append(self._default_system_message())
 
-                # Don't re-append user message on human_response resumption
                 if params and not (run_context and run_context.human_response):
                     messages.append({"role": "user", "content": params.model_dump_json(exclude={"type"})})
 
@@ -637,8 +651,9 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
                     if isinstance(event, CompletedEvent):
                         search_output = event.data.output
                         # Merge sub-agent's intermediate messages (tool calls/results) into orchestrator
+                        # Skip messages already present (e.g. from HITL resume memory restore)
                         for msg in event.run_context.messages or []:
-                            if msg.get("role") in ("assistant", "tool"):
+                            if msg.get("role") in ("assistant", "tool") and msg not in messages:
                                 messages.append(msg)
                         yield PartialOutputEvent(
                             source=class_name,
