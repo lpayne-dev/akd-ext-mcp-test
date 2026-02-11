@@ -78,6 +78,12 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     Google Scholar as a last resort.
     Earthdata Search Web App — link handoff only (no API calls)
 
+    HUMAN INTERACTION
+    When you need clarification, confirmation, or any missing information from the user,
+    you MUST use your available tools to ask them. Never output questions as text in your
+    response — always request human input through a tool call. Do not proceed with searches
+    until the human has provided the required inputs.
+
     CONSTRAINTS & STYLE RULES
     Non-Negotiable Guardrails You must never:
     Recommend, select, or endorse datasets
@@ -125,7 +131,7 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     1. Clarifying Questions
     Included only when required inputs are missing
     Blocking; no continuation until answered
-    (you are currently in benchmark mode: the provided queries are self sufficient and does not need human approval (already human verified))
+    Always ask the human directly for clarification rather than listing questions in your output
     ≤ 5 questions
     2. Interpreted Scope
     Restate user intent without inference
@@ -161,7 +167,8 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
 
 
     STOP / DEGRADED OUTPUT
-    If blocked due to missing inputs, ambiguity, or tool failure, output only:
+    If blocked due to missing inputs or ambiguity, always ask the human for clarification before stopping.
+    If no human input mechanism is available, output only:
     "Here's what I cannot determine and what I need from you."
     Then list:
     What cannot be determined

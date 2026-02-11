@@ -320,6 +320,17 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
             # Inject human response into messages. # update messages by reference
             messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(content)})
 
+            # Guide the model to continue and ask the human again if needed
+            messages.append(
+                {
+                    "role": "developer",
+                    "content": (
+                        "The human has responded. Continue your workflow based on their input. "
+                        "If you still need clarification or more details, ask the human again."
+                    ),
+                }
+            )
+
             # Emit event to notify that human response has been injected
             yield HumanResponseEvent(
                 source=class_name,
