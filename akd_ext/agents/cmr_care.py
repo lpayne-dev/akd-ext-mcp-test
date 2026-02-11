@@ -630,8 +630,9 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
                     if isinstance(event, CompletedEvent):
                         search_output = event.data.output
                         # Merge sub-agent's intermediate messages (tool calls/results) into orchestrator
+                        # Skip messages already present (e.g. from HITL resume memory restore)
                         for msg in event.run_context.messages or []:
-                            if msg.get("role") in ("assistant", "tool"):
+                            if msg.get("role") in ("assistant", "tool") and msg not in messages:
                                 messages.append(msg)
                         yield PartialOutputEvent(
                             source=class_name,
