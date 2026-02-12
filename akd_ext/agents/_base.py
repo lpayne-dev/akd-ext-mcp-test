@@ -239,9 +239,98 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 )
         return runner_input
 
+    @staticmethod
+    def _from_runner_output(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert Responses_API_format back to Chat_Completions_API messages format.
+        The inverse of _to_runner_input(). Converts Runner output items
+        (Responses API format) back to Chat Completions format (akd-core standard).
+        This is done to enable reusability across AKD core. AKD core uses Chat_Completions_API(old) via litellm.
+        TODO: later, make the akd-core accept both the API message format.
+        """
+        messages: list[dict[str, Any]] = []
+        # Buffer to merge consecutive function_call items into one assistant message
+        pending_tool_calls: list[dict[str, Any]] = []
+
+        def _flush_tool_calls() -> None:
+            """Flush buffered tool calls into a single assistant message."""
+            if pending_tool_calls:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": list(pending_tool_calls),
+                    }
+                )
+                pending_tool_calls.clear()
+
+        for item in items:
+            item_type = item.get("type")
+            role = item.get("role")
+            if role in ("system", "user", "developer"):
+                _flush_tool_calls()
+                messages.append({"role": role, "content": item["content"]})
+            elif role == "assistant":
+                _flush_tool_calls()
+                messages.append({"role": "assistant", "content": item.get("content", "")})
+            elif item_type == "message" and item.get("role") == "assistant":
+                # Responses API message output item
+                _flush_tool_calls()
+                content_parts = item.get("content", [])
+                text = ""
+                if isinstance(content_parts, list):
+                    text = "".join(
+                        part.get("text", "")
+                        for part in content_parts
+                        if isinstance(part, dict) and part.get("type") == "output_text"
+                    )
+                elif isinstance(content_parts, str):
+                    text = content_parts
+                messages.append({"role": "assistant", "content": text})
+            elif item_type in ("function_call", "mcp_call"):
+                arguments = item.get("arguments", "{}")
+                # Parse JSON string back to dict if possible
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        pass
+                pending_tool_calls.append(
+                    {
+                        "id": item.get("call_id") or item.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": item["name"],
+                            "arguments": arguments,
+                        },
+                    }
+                )
+                # MCP calls may carry output directly on the item (server-side execution)
+                if item_type == "mcp_call" and "output" in item:
+                    _flush_tool_calls()
+                    mcp_output = item["output"]
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": item.get("call_id") or item.get("id", ""),
+                            "content": mcp_output if isinstance(mcp_output, str) else json.dumps(mcp_output),
+                        }
+                    )
+            elif item_type in ("function_call_output", "mcp_call_output"):
+                _flush_tool_calls()
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": item["call_id"],
+                        "content": item.get("output", ""),
+                    }
+                )
+        _flush_tool_calls()
+        return messages
+
     async def get_response_async(
         self,
         messages: list[dict[str, Any]],
+        run_context: RunContext,
         **kwargs,
     ) -> Any:
         """Run the agent and return the RunResult.
@@ -252,18 +341,47 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         Returns:
             RunResult from the agent execution.
         """
-        with trace(self.__class__.__name__):
-            return await Runner.run(
+        class_name = self.__class__.__name__
+        run_context.messages = messages
+
+        # check for human response
+        human_response = run_context.human_response
+        if human_response:
+            tool_call_id = human_response.tool_call_id
+            content = human_response.content
+
+            # Inject human response into messages. # update messages by reference
+            messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(content)})
+
+            # Guide the model to continue and ask the human again if needed
+            messages.append(
+                {
+                    "role": "developer",
+                    "content": (
+                        "The human has responded. Continue your workflow based on their input. "
+                        "If you still need clarification or more details, ask the human again."
+                    ),
+                }
+            )
+
+        with trace(class_name):
+            result = await Runner.run(
                 self._agent,
                 input=self._to_runner_input(messages),
                 run_config=self.config.run_config,
             )
+            # replacing the messages via memory reference with entire runner messages.
+            messages[:] = self._from_runner_output(result.to_input_list())
+            return result
 
     async def _arun(self, params: InSchema, run_context: RunContext | None = None, **kwargs) -> OutSchema:
         """Run the agent workflow.
 
         Override for custom orchestration (e.g., multi-agent pipelines).
         """
+        run_context: RunContext = (run_context or RunContext()).model_copy()
+        run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
+
         async with self.memory.asession(
             stateless=self.stateless,
             run_context=run_context,
@@ -280,7 +398,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 messages.append({"role": "user", "content": params.model_dump_json()})
 
             # Run pipeline via get_response_async
-            result = await self.get_response_async(messages=messages)
+            result = await self.get_response_async(messages=messages, run_context=run_context)
 
             # Return typed output
             final_output = result.final_output
