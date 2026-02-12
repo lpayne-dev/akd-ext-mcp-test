@@ -348,257 +348,263 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         last_partial_dict = None
         current_turn_tool_calls: list[dict[str, Any]] = []  # tool calls for current assistant turn
         current_turn_has_outputs: bool = False  # whether any tool_output seen for current turn
+        with trace(class_name):
+            stream = Runner.run_streamed(
+                self._agent,
+                input=self._to_runner_input(messages),
+                run_config=self.config.run_config,
+            )
 
-        stream = Runner.run_streamed(
-            self._agent,
-            input=self._to_runner_input(messages),
-            run_config=self.config.run_config,
-        )
+            async for event in stream.stream_events():
+                if self.debug:
+                    if isinstance(event, RawResponsesStreamEvent):
+                        logger.debug(f"[{class_name}] RawEvent: {getattr(event.data, 'type', 'unknown')}")
+                    elif isinstance(event, RunItemStreamEvent):
+                        logger.debug(f"[{class_name}] RunItemEvent: {event.name}")
 
-        async for event in stream.stream_events():
-            if self.debug:
                 if isinstance(event, RawResponsesStreamEvent):
-                    logger.debug(f"[{class_name}] RawEvent: {getattr(event.data, 'type', 'unknown')}")
-                elif isinstance(event, RunItemStreamEvent):
-                    logger.debug(f"[{class_name}] RunItemEvent: {event.name}")
+                    event_type = getattr(event.data, "type", "")
 
-            if isinstance(event, RawResponsesStreamEvent):
-                event_type = getattr(event.data, "type", "")
-
-                if event_type == "response.output_text.delta":
-                    delta = getattr(event.data, "delta", "") or ""
-                    token_buffer += delta
-                    accumulated += delta
-                    if len(token_buffer) >= token_batch_size:
-                        # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
-                        yield StreamingTokenEvent(
-                            source=class_name,
-                            message=f"Streaming {class_name}",
-                            data=StreamingEventData(token=token_buffer),
-                            run_context=run_context,
-                        )
-
-                        token_buffer = ""
-
-                    parsed = self._try_parse_json(accumulated)
-                    if parsed and parsed != last_partial_dict:
-                        last_partial_dict = parsed
-                        try:
-                            partial = PartialResponseModel.model_validate(parsed)
-                            yield PartialOutputEvent(
+                    if event_type == "response.output_text.delta":
+                        delta = getattr(event.data, "delta", "") or ""
+                        token_buffer += delta
+                        accumulated += delta
+                        if len(token_buffer) >= token_batch_size:
+                            # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                            yield StreamingTokenEvent(
                                 source=class_name,
-                                message="Partial...",
-                                data=PartialEventData(partial_output=partial),
+                                message=f"Streaming {class_name}",
+                                data=StreamingEventData(token=token_buffer),
                                 run_context=run_context,
                             )
-                        except Exception:
-                            pass
 
-                elif event_type == "response.output_text.done":
-                    # ResponseTextDoneEvent.text has the complete text for this output part
-                    done_text = getattr(event.data, "text", "") or ""
-                    if done_text and not accumulated:
-                        accumulated = done_text
-                    if token_buffer:
-                        yield StreamingTokenEvent(
-                            source=class_name,
-                            message=f"Streaming {class_name}",
-                            data=StreamingEventData(token=token_buffer),
-                            run_context=run_context,
-                        )
-                        token_buffer = ""
+                            token_buffer = ""
 
-                elif "reasoning" in event_type:
-                    content = getattr(event.data, "content", "") or getattr(event.data, "delta", "") or ""
-                    if content:
-                        yield ThinkingEvent(
-                            source=class_name,
-                            message="Reasoning...",
-                            data=ThinkingEventData(thinking_content=content),
-                            run_context=run_context,
-                        )
-                        # yield {"type": StreamEventType.THINKING, "content": content}
-
-            elif isinstance(event, RunItemStreamEvent):
-                if event.name == "tool_called":
-                    raw_item = getattr(event.item, "raw_item", None)
-                    if raw_item:
-                        tool_name = getattr(raw_item, "name", "")
-                        tool_input_raw = getattr(raw_item, "arguments", "{}")
-                        tool_input = json.loads(tool_input_raw) if isinstance(tool_input_raw, str) else tool_input_raw
-                        tool_call_id = getattr(raw_item, "call_id", None) or getattr(
-                            raw_item, "id", uuid.uuid4().hex[:8]
-                        )
-
-                        # Turn boundary: new tool_called after previous turn's outputs → reset
-                        if current_turn_has_outputs:
-                            current_turn_tool_calls = []
-                            current_turn_has_outputs = False
-
-                        current_turn_tool_calls.append(
-                            {
-                                "id": tool_call_id,
-                                "type": "function",
-                                "function": {"name": tool_name, "arguments": tool_input},
-                            }
-                        )
-                        yield ToolCallingEvent(
-                            source=class_name,
-                            message=f"Calling tool: {tool_name}",
-                            data=ToolCallingEventData(
-                                tool_call=ToolCall(
-                                    tool_call_id=tool_call_id,
-                                    tool_name=tool_name,
-                                    arguments=tool_input,
-                                )
-                            ),
-                            run_context=run_context,
-                        )
-
-                        # HostedMCPTool: server-side execution, output on the raw_item itself
-                        if getattr(raw_item, "type", "") == "mcp_call":
-                            mcp_output = getattr(raw_item, "output", None)
-                            if mcp_output is not None:
-                                if not current_turn_has_outputs and current_turn_tool_calls:
-                                    messages.append(
-                                        {
-                                            "role": "assistant",
-                                            "content": None,
-                                            "tool_calls": list(current_turn_tool_calls),
-                                        }
-                                    )
-                                    current_turn_has_outputs = True
-
-                                serialized = mcp_output if isinstance(mcp_output, str) else json.dumps(mcp_output)
-                                messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": serialized})
-                                yield ToolResultEvent(
+                        parsed = self._try_parse_json(accumulated)
+                        if parsed and parsed != last_partial_dict:
+                            last_partial_dict = parsed
+                            try:
+                                partial = PartialResponseModel.model_validate(parsed)
+                                yield PartialOutputEvent(
                                     source=class_name,
-                                    message="Tool result",
-                                    data=ToolResultEventData(
-                                        result=ToolResult(
-                                            tool_call_id=tool_call_id,
-                                            tool_name=tool_name,
-                                            content=mcp_output,
-                                        )
-                                    ),
+                                    message="Partial...",
+                                    data=PartialEventData(partial_output=partial),
                                     run_context=run_context,
                                 )
-
-                        if tool_name == "ask_human":
-                            try:
-                                human_input = HumanToolInput(**tool_input)
                             except Exception:
-                                human_input = HumanToolInput(question=tool_input.get("question", "Input needed"))
+                                pass
 
-                            # Flush current turn's assistant message for resumption
-                            messages.append(
+                    elif event_type == "response.output_text.done":
+                        # ResponseTextDoneEvent.text has the complete text for this output part
+                        done_text = getattr(event.data, "text", "") or ""
+                        if done_text and not accumulated:
+                            accumulated = done_text
+                        if token_buffer:
+                            yield StreamingTokenEvent(
+                                source=class_name,
+                                message=f"Streaming {class_name}",
+                                data=StreamingEventData(token=token_buffer),
+                                run_context=run_context,
+                            )
+                            token_buffer = ""
+
+                    elif "reasoning" in event_type:
+                        content = getattr(event.data, "content", "") or getattr(event.data, "delta", "") or ""
+                        if content:
+                            yield ThinkingEvent(
+                                source=class_name,
+                                message="Reasoning...",
+                                data=ThinkingEventData(thinking_content=content),
+                                run_context=run_context,
+                            )
+                            # yield {"type": StreamEventType.THINKING, "content": content}
+
+                elif isinstance(event, RunItemStreamEvent):
+                    if event.name == "tool_called":
+                        raw_item = getattr(event.item, "raw_item", None)
+                        if raw_item:
+                            tool_name = getattr(raw_item, "name", "")
+                            tool_input_raw = getattr(raw_item, "arguments", "{}")
+                            tool_input = (
+                                json.loads(tool_input_raw) if isinstance(tool_input_raw, str) else tool_input_raw
+                            )
+                            tool_call_id = getattr(raw_item, "call_id", None) or getattr(
+                                raw_item, "id", uuid.uuid4().hex[:8]
+                            )
+
+                            # Turn boundary: new tool_called after previous turn's outputs → reset
+                            if current_turn_has_outputs:
+                                current_turn_tool_calls = []
+                                current_turn_has_outputs = False
+
+                            current_turn_tool_calls.append(
                                 {
-                                    "role": "assistant",
-                                    "content": None,
-                                    "tool_calls": list(current_turn_tool_calls),
+                                    "id": tool_call_id,
+                                    "type": "function",
+                                    "function": {"name": tool_name, "arguments": tool_input},
                                 }
                             )
-                            run_context.messages = list(messages)
-                            # Cancel the Runner to prevent background tool execution and retry loop
-                            stream.cancel()
-                            yield HumanInputRequiredEvent(
+                            yield ToolCallingEvent(
                                 source=class_name,
-                                message=f"Human input required: {tool_input.get('question', 'Input needed')}",
-                                data=HumanInputRequiredEventData(
-                                    human_input=human_input,
-                                    tool_call_id=tool_call_id,
-                                    tool_name=tool_name,
+                                message=f"Calling tool: {tool_name}",
+                                data=ToolCallingEventData(
+                                    tool_call=ToolCall(
+                                        tool_call_id=tool_call_id,
+                                        tool_name=tool_name,
+                                        arguments=tool_input,
+                                    )
                                 ),
                                 run_context=run_context,
                             )
-                            return
 
-                elif event.name == "tool_output":
-                    raw_item = getattr(event.item, "raw_item", None)
-                    tool_output_content = getattr(event.item, "output", None)
-                    tool_call_id = (
-                        raw_item.get("call_id", "") if isinstance(raw_item, dict) else getattr(raw_item, "call_id", "")
-                    ) or uuid.uuid4().hex[:8]
-                    if tool_output_content is not None:
-                        # Flush assistant message on first tool_output (correct ordering)
-                        if not current_turn_has_outputs and current_turn_tool_calls:
+                            # HostedMCPTool: server-side execution, output on the raw_item itself
+                            if getattr(raw_item, "type", "") == "mcp_call":
+                                mcp_output = getattr(raw_item, "output", None)
+                                if mcp_output is not None:
+                                    if not current_turn_has_outputs and current_turn_tool_calls:
+                                        messages.append(
+                                            {
+                                                "role": "assistant",
+                                                "content": None,
+                                                "tool_calls": list(current_turn_tool_calls),
+                                            }
+                                        )
+                                        current_turn_has_outputs = True
+
+                                    serialized = mcp_output if isinstance(mcp_output, str) else json.dumps(mcp_output)
+                                    messages.append(
+                                        {"role": "tool", "tool_call_id": tool_call_id, "content": serialized}
+                                    )
+                                    yield ToolResultEvent(
+                                        source=class_name,
+                                        message="Tool result",
+                                        data=ToolResultEventData(
+                                            result=ToolResult(
+                                                tool_call_id=tool_call_id,
+                                                tool_name=tool_name,
+                                                content=mcp_output,
+                                            )
+                                        ),
+                                        run_context=run_context,
+                                    )
+
+                            if tool_name == "ask_human":
+                                try:
+                                    human_input = HumanToolInput(**tool_input)
+                                except Exception:
+                                    human_input = HumanToolInput(question=tool_input.get("question", "Input needed"))
+
+                                # Flush current turn's assistant message for resumption
+                                messages.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": None,
+                                        "tool_calls": list(current_turn_tool_calls),
+                                    }
+                                )
+                                run_context.messages = list(messages)
+                                # Cancel the Runner to prevent background tool execution and retry loop
+                                stream.cancel()
+                                yield HumanInputRequiredEvent(
+                                    source=class_name,
+                                    message=f"Human input required: {tool_input.get('question', 'Input needed')}",
+                                    data=HumanInputRequiredEventData(
+                                        human_input=human_input,
+                                        tool_call_id=tool_call_id,
+                                        tool_name=tool_name,
+                                    ),
+                                    run_context=run_context,
+                                )
+                                return
+
+                    elif event.name == "tool_output":
+                        raw_item = getattr(event.item, "raw_item", None)
+                        tool_output_content = getattr(event.item, "output", None)
+                        tool_call_id = (
+                            raw_item.get("call_id", "")
+                            if isinstance(raw_item, dict)
+                            else getattr(raw_item, "call_id", "")
+                        ) or uuid.uuid4().hex[:8]
+                        if tool_output_content is not None:
+                            # Flush assistant message on first tool_output (correct ordering)
+                            if not current_turn_has_outputs and current_turn_tool_calls:
+                                messages.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": None,
+                                        "tool_calls": list(current_turn_tool_calls),
+                                    }
+                                )
+                                current_turn_has_outputs = True
+
+                            # Append tool result message
+                            serialized = (
+                                tool_output_content
+                                if isinstance(tool_output_content, str)
+                                else json.dumps(tool_output_content)
+                            )
                             messages.append(
                                 {
-                                    "role": "assistant",
-                                    "content": None,
-                                    "tool_calls": list(current_turn_tool_calls),
+                                    "role": "tool",
+                                    "tool_call_id": tool_call_id,
+                                    "content": serialized,
                                 }
                             )
-                            current_turn_has_outputs = True
 
-                        # Append tool result message
-                        serialized = (
-                            tool_output_content
-                            if isinstance(tool_output_content, str)
-                            else json.dumps(tool_output_content)
-                        )
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call_id,
-                                "content": serialized,
-                            }
-                        )
+                            yield ToolResultEvent(
+                                source=class_name,
+                                message="Tool result",
+                                data=ToolResultEventData(
+                                    result=ToolResult(
+                                        tool_call_id=tool_call_id,
+                                        tool_name=getattr(raw_item, "name", "unknown"),
+                                        content=tool_output_content,
+                                    )
+                                ),
+                                run_context=run_context,
+                            )
 
-                        yield ToolResultEvent(
-                            source=class_name,
-                            message="Tool result",
-                            data=ToolResultEventData(
-                                result=ToolResult(
-                                    tool_call_id=tool_call_id,
-                                    tool_name=getattr(raw_item, "name", "unknown"),
-                                    content=tool_output_content,
-                                )
-                            ),
-                            run_context=run_context,
-                        )
+                    elif event.name == "message_output_created":
+                        if token_buffer:
+                            yield StreamingTokenEvent(
+                                source=class_name,
+                                message=f"Streaming {class_name}",
+                                data=StreamingEventData(token=token_buffer),
+                                run_context=run_context,
+                            )
+                            # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                            token_buffer = ""
 
-                elif event.name == "message_output_created":
-                    if token_buffer:
-                        yield StreamingTokenEvent(
-                            source=class_name,
-                            message=f"Streaming {class_name}",
-                            data=StreamingEventData(token=token_buffer),
-                            run_context=run_context,
-                        )
-                        # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
-                        token_buffer = ""
+            if self.debug:
+                logger.debug(
+                    f"[{class_name}] accumulated={len(accumulated)} chars, "
+                    f"stream.final_output={type(stream.final_output).__name__}"
+                )
 
-        if self.debug:
-            logger.debug(
-                f"[{class_name}] accumulated={len(accumulated)} chars, "
-                f"stream.final_output={type(stream.final_output).__name__}"
-            )
+            if issubclass(self.output_schema, TextOutput):
+                content = accumulated
+                if not content and isinstance(stream.final_output, str):
+                    content = stream.final_output
+                final_output = self.output_schema(content=content)
+            else:
+                final_output = stream.final_output_as(self.output_schema, raise_if_incorrect_type=False)
 
-        if issubclass(self.output_schema, TextOutput):
-            content = accumulated
-            if not content and isinstance(stream.final_output, str):
-                content = stream.final_output
-            final_output = self.output_schema(content=content)
-        else:
-            final_output = stream.final_output_as(self.output_schema, raise_if_incorrect_type=False)
+            if final_output:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": accumulated or None,
+                    }
+                )
+                yield CompletedEvent(
+                    source=class_name,
+                    message=f"Completed {class_name}",
+                    data=CompletedEventData[self.output_schema](output=final_output),
+                    run_context=run_context,
+                )
+                # yield {"type": StreamEventType.COMPLETED, "output": final_output}
 
-        if final_output:
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": accumulated or None,
-                }
-            )
-            yield CompletedEvent(
-                source=class_name,
-                message=f"Completed {class_name}",
-                data=CompletedEventData[self.output_schema](output=final_output),
-                run_context=run_context,
-            )
-            # yield {"type": StreamEventType.COMPLETED, "output": final_output}
-
-        # TODO: Check how to add reflection_prompt to the Runner after the output is generated.
+            # TODO: Check how to add reflection_prompt to the Runner after the output is generated.
 
     async def _astream(
         self,
