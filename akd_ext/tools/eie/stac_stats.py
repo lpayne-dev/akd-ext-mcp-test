@@ -69,7 +69,7 @@ class STACItemStatsOutputSchema(OutputSchema):
 class STACItemStatsToolConfig(BaseToolConfig):
     """Config for the STACItemStatsTool."""
 
-    raster_api_url: str = Field(default="https://dev.ghg.center/api/raster", description="Raster API URL")
+    raster_api_url: str = Field(default="https://dev.openveda.cloud/api/raster", description="Raster API URL")
 
 
 @mcp_tool
