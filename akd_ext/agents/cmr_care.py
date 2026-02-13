@@ -732,7 +732,7 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
 
         Overriden for custom orchestration of multi-agent pipeline.
         """
-        run_context: RunContext = (run_context or kwargs.get("run_context", RunContext())).model_copy()
+        run_context: RunContext = (run_context or RunContext()).model_copy()
         run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
 
         async with self.memory.asession(

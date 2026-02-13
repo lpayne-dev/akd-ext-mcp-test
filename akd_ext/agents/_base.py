@@ -379,9 +379,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
         Override for custom orchestration (e.g., multi-agent pipelines).
         """
-        run_context: RunContext = (
-            run_context or kwargs.get("run_context", RunContext())
-        ).model_copy()  # have arun call _arun with run_contex
+        run_context: RunContext = (run_context or RunContext()).model_copy()
         run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
 
         async with self.memory.asession(
