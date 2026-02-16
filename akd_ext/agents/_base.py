@@ -1,13 +1,70 @@
 from __future__ import annotations
 
+import json
+import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
-from agents import Agent, ModelSettings, RunConfig, Runner, trace
+from agents import (
+    Agent,
+    ModelSettings,
+    RunConfig,
+    Runner,
+    function_tool,
+    trace,
+)
+from agents.stream_events import (
+    RawResponsesStreamEvent,
+    RunItemStreamEvent,
+)
 from openai.types.shared.reasoning import Reasoning
-from pydantic import Field
 
-from akd._base import InputSchema, OutputSchema
+from loguru import logger
+from pydantic import Field, field_validator
+
+from akd._base.streaming import StreamEvent, StreamingMixin
+from akd._base import (
+    InputSchema,
+    OutputSchema,
+    StreamEventType,
+    StartingEvent,
+    StartingEventData,
+    RunningEvent,
+    StreamingTokenEvent,
+    StreamingEventData,
+    ThinkingEvent,
+    ThinkingEventData,
+    ToolCallingEvent,
+    ToolCallingEventData,
+    ToolCall,
+    ToolResultEvent,
+    ToolResultEventData,
+    ToolResult,
+    CompletedEvent,
+    CompletedEventData,
+    FailedEvent,
+    FailedEventData,
+    HumanResponseEvent,
+    HumanResponseEventData,
+    HumanInputRequiredEvent,
+    HumanInputRequiredEventData,
+    RunContext,
+    PartialOutputEvent,
+    PartialEventData,
+    Memory,
+    TextOutput,
+)
 from akd.agents._base import BaseAgent, BaseAgentConfig
+from akd.tools.human import HumanToolInput
+
+from akd._base.errors import (
+    UnexpectedModelBehavior,
+)
+
+from akd.utils import PartialModel
+
+from akd_ext._types import AKDTool, OPENAI_TOOL_TYPES
+from akd_ext.mcp.converter import tool_converter
 
 
 class OpenAIBaseAgentConfig(BaseAgentConfig):
@@ -20,13 +77,17 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
     Defaults to `stateless=False` (stateful) for multi-turn conversations.
     """
 
+    model_name: str = Field(
+        default="gpt-5-nano",
+        description="Model name for the agent.",
+    )
     stateless: bool = Field(
         default=False,
         description="Whether to maintain conversation history. False = stateful (default for OpenAI agents).",
     )
     tools: list[Any] = Field(
         default_factory=list,
-        description="Tools for the agent (FunctionTool, HostedMCPTool, WebSearchTool, etc.)",
+        description="Tools for the agent (OpenAITool, AKDTool(akd.tools._base.BaseTool) — AKDTools auto-converted to FunctionTool).",
     )
     tracing_params: dict[str, Any] = Field(
         default_factory=dict,
@@ -37,6 +98,20 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
     top_p: float | None = Field(default=None, description="Nucleus sampling parameter.")
     frequency_penalty: float | None = Field(default=None, description="Frequency penalty for token repetition.")
     presence_penalty: float | None = Field(default=None, description="Presence penalty for new topics.")
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _validate_and_convert_tools(cls, v: list) -> list:
+        """Validate tool types and convert AKDTool instances to OpenAI FunctionTool."""
+        converted = []
+        for t in v:
+            if isinstance(t, AKDTool):
+                converted.append(function_tool(tool_converter(t)))
+            elif isinstance(t, OPENAI_TOOL_TYPES):
+                converted.append(t)
+            else:
+                raise ValueError(f"Invalid tool type: {type(t).__name__}. Expected OpenAITool or AKDTool.")
+        return converted
 
     @property
     def model_settings(self) -> ModelSettings:
@@ -74,7 +149,7 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
         return RunConfig(trace_metadata=self.tracing_params or {})
 
 
-class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent):
+class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent, StreamingMixin):
     """Base class for OpenAI Agents SDK based agents.
 
     Provides:
@@ -99,20 +174,12 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent)
     def __init__(
         self,
         config: OpenAIBaseAgentConfig | None = None,
+        memory: Memory | None = None,
         debug: bool = False,
+        **kwargs,
     ) -> None:
-        super().__init__(config=config, debug=debug)
-        self._memory: list[dict[str, Any]] = []
+        super().__init__(config=config, memory=memory, debug=debug)
         self._agent = self._create_agent()
-
-    @property
-    def memory(self) -> list[dict[str, Any]]:
-        """Conversation history for multi-turn interactions."""
-        return self._memory
-
-    def reset_memory(self) -> None:
-        """Clear conversation history."""
-        self._memory.clear()
 
     def _create_agent(self) -> Agent:
         """Create the OpenAI Agent object.
@@ -123,15 +190,147 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent)
         return Agent(
             name=self.__class__.__name__,
             instructions=self.config.system_prompt,
-            model=self.config.model_name or "gpt-4o",
+            model=self.config.model_name or "gpt-5-nano",
             tools=self.config.tools,
-            output_type=self.output_schema,
+            output_type=None if issubclass(self.output_schema, TextOutput) else self.output_schema,
             model_settings=self.config.model_settings,
         )
 
+    def _try_parse_json(self, content: str) -> dict[str, Any] | None:
+        """Try to parse content as JSON."""
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def _to_runner_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert Chat Completions messages to Responses API format for Runner input.
+
+        The internal messages list uses Chat Completions format (akd-core standard),
+        but Runner.run_streamed() expects Responses API format for tool calls/results.
+        """
+        runner_input: list[dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role in ("system", "user", "developer"):
+                runner_input.append({"role": role, "content": msg["content"]})
+            elif role == "assistant":
+                if msg.get("content"):
+                    runner_input.append({"role": "assistant", "content": msg["content"]})
+                for tc in msg.get("tool_calls", []):
+                    func = tc.get("function", {})
+                    arguments = func.get("arguments", {})
+                    runner_input.append(
+                        {
+                            "type": "function_call",
+                            "call_id": tc["id"],
+                            "name": func["name"],
+                            "arguments": json.dumps(arguments) if isinstance(arguments, dict) else str(arguments),
+                        }
+                    )
+            elif role == "tool":
+                runner_input.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": msg["tool_call_id"],
+                        "output": msg["content"],
+                    }
+                )
+        return runner_input
+
+    @staticmethod
+    def _from_runner_output(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert Responses_API_format back to Chat_Completions_API messages format.
+        The inverse of _to_runner_input(). Converts Runner output items
+        (Responses API format) back to Chat Completions format (akd-core standard).
+        This is done to enable reusability across AKD core. AKD core uses Chat_Completions_API(old) via litellm.
+        TODO: later, make the akd-core accept both the API message format.
+        """
+        messages: list[dict[str, Any]] = []
+        # Buffer to merge consecutive function_call items into one assistant message
+        pending_tool_calls: list[dict[str, Any]] = []
+
+        def _flush_tool_calls() -> None:
+            """Flush buffered tool calls into a single assistant message."""
+            if pending_tool_calls:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": list(pending_tool_calls),
+                    }
+                )
+                pending_tool_calls.clear()
+
+        for item in items:
+            item_type = item.get("type")
+            role = item.get("role")
+            if role in ("system", "user", "developer"):
+                _flush_tool_calls()
+                messages.append({"role": role, "content": item["content"]})
+            elif role == "assistant":
+                _flush_tool_calls()
+                messages.append({"role": "assistant", "content": item.get("content", "")})
+            elif item_type == "message" and item.get("role") == "assistant":
+                # Responses API message output item
+                _flush_tool_calls()
+                content_parts = item.get("content", [])
+                text = ""
+                if isinstance(content_parts, list):
+                    text = "".join(
+                        part.get("text", "")
+                        for part in content_parts
+                        if isinstance(part, dict) and part.get("type") == "output_text"
+                    )
+                elif isinstance(content_parts, str):
+                    text = content_parts
+                messages.append({"role": "assistant", "content": text})
+            elif item_type in ("function_call", "mcp_call"):
+                arguments = item.get("arguments", "{}")
+                # Parse JSON string back to dict if possible
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        pass
+                pending_tool_calls.append(
+                    {
+                        "id": item.get("call_id") or item.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": item["name"],
+                            "arguments": arguments,
+                        },
+                    }
+                )
+                # MCP calls may carry output directly on the item (server-side execution)
+                if item_type == "mcp_call" and "output" in item:
+                    _flush_tool_calls()
+                    mcp_output = item["output"]
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": item.get("call_id") or item.get("id", ""),
+                            "content": mcp_output if isinstance(mcp_output, str) else json.dumps(mcp_output),
+                        }
+                    )
+            elif item_type in ("function_call_output", "mcp_call_output"):
+                _flush_tool_calls()
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": item["call_id"],
+                        "content": item.get("output", ""),
+                    }
+                )
+        _flush_tool_calls()
+        return messages
+
     async def get_response_async(
         self,
-        messages: list[dict[str, Any]] | None = None,
+        messages: list[dict[str, Any]],
+        run_context: RunContext,
         **kwargs,
     ) -> Any:
         """Run the agent and return the RunResult.
@@ -142,84 +341,501 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent)
         Returns:
             RunResult from the agent execution.
         """
-        agent_input = messages if messages is not None else self._memory
+        class_name = self.__class__.__name__
+        run_context.messages = messages
 
-        with trace(self.__class__.__name__):
-            return await Runner.run(
-                self._agent,
-                input=agent_input,
-                run_config=self.config.run_config,
+        # check for human response
+        human_response = run_context.human_response
+        if human_response:
+            tool_call_id = human_response.tool_call_id
+            content = human_response.content
+
+            # Inject human response into messages. # update messages by reference
+            messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(content)})
+
+            # Guide the model to continue and ask the human again if needed
+            messages.append(
+                {
+                    "role": "developer",
+                    "content": (
+                        "The human has responded. Continue your workflow based on their input. "
+                        "If you still need clarification or more details, ask the human again."
+                    ),
+                }
             )
 
-    async def _arun(self, params: InSchema, **kwargs) -> OutSchema:
+        with trace(class_name):
+            result = await Runner.run(
+                self._agent,
+                input=self._to_runner_input(messages),
+                run_config=self.config.run_config,
+            )
+            # replacing the messages via memory reference with entire runner messages.
+            messages[:] = self._from_runner_output(result.to_input_list())
+            return result
+
+    async def _arun(self, params: InSchema, run_context: RunContext | None = None, **kwargs) -> OutSchema:
         """Run the agent workflow.
 
         Override for custom orchestration (e.g., multi-agent pipelines).
         """
-        if self.config.stateless:
-            self.reset_memory()
+        run_context: RunContext = (run_context or RunContext()).model_copy()
+        run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
 
-        # Add user input to memory
-        self._memory.append({"role": "user", "content": params.model_dump_json()})
+        async with self.memory.asession(
+            stateless=self.stateless,
+            run_context=run_context,
+            enable_trimming=self.enable_trimming,
+            model_name=self.model_name,
+            max_tokens=self.max_tokens,
+            trim_ratio=self.trim_ratio,
+        ) as messages:
+            if not messages:
+                messages.append(self._default_system_message())
 
-        # Run pipeline via get_response_async
-        result = await self.get_response_async(messages=self._memory)
+            # because human response run context messages handled by _stream_llm_response
+            if params and not (run_context and run_context.human_response):
+                messages.append({"role": "user", "content": params.model_dump_json()})
 
-        # Update memory with full conversation
-        self._memory = result.to_input_list()
+            # Run pipeline via get_response_async
+            result = await self.get_response_async(messages=messages, run_context=run_context)
 
-        # Return typed output
-        final_output = result.final_output
-        if isinstance(final_output, self.output_schema):
-            return final_output
-        elif hasattr(final_output, "model_dump"):
-            return self.output_schema(**final_output.model_dump())
-        else:
-            return self.output_schema.model_validate_json(str(final_output))
+            # Return typed output
+            final_output = result.final_output
 
+            # add final assistant response message
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": final_output
+                    if isinstance(final_output, str)
+                    else final_output.model_dump_json(exclude={"type"}),
+                }
+            )
 
-class FreeFormOutput(OutputSchema):
-    """Default output schema for free-form agents."""
+            if issubclass(self.output_schema, TextOutput):
+                return self.output_schema(content=final_output)
+            elif isinstance(final_output, self.output_schema):
+                return final_output
+            elif hasattr(final_output, "model_dump"):
+                return self.output_schema(**final_output.model_dump())
+            else:
+                return self.output_schema.model_validate_json(str(final_output))
 
-    response: str = Field(..., description="Free-form text response from agent")
+    async def _stream_llm_response(
+        self,
+        messages: list[dict[str, Any]],
+        run_context: RunContext,
+        token_batch_size: int = 10,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream using Runner.run_streamed()."""
 
+        class_name = self.__class__.__name__
+        run_context.messages = messages
 
-class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, FreeFormOutput]):
-    """Base for OpenAI agents returning free-form text (no structured output_type).
+        # check for human response
+        human_response = run_context.human_response
+        if human_response:
+            tool_call_id = human_response.tool_call_id
+            content = human_response.content
 
-    Use when the agent should return unstructured text that gets wrapped
-    in FreeFormOutput. Does NOT set output_type on the OpenAI SDK Agent.
+            # Inject human response into messages. # update messages by reference
+            messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(content)})
 
-    Subclasses must define:
-    - input_schema: Input schema class
+            # Guide the model to continue and ask the human again if needed
+            messages.append(
+                {
+                    "role": "developer",
+                    "content": (
+                        "The human has responded. Continue your workflow based on their input. "
+                        "If you still need clarification or more details, ask the human again."
+                    ),
+                }
+            )
 
-    Subclasses can override:
-    - output_schema: Defaults to FreeFormOutput
-    - _create_agent(): For custom agent creation
-    """
+            # Emit event to notify that human response has been injected
+            yield HumanResponseEvent(
+                source=class_name,
+                message="Resumed with human input",
+                data=HumanResponseEventData(tool_call_id=tool_call_id, response=content),
+                run_context=run_context,
+            )
 
-    output_schema = FreeFormOutput
+        # For partial output validation (only for final answer)
+        PartialResponseModel = PartialModel[self.output_schema]
 
-    def _create_agent(self) -> Agent:
-        """Create agent WITHOUT output_type (free-form text output)."""
-        return Agent(
-            name=self.__class__.__name__,
-            instructions=self.config.system_prompt,
-            model=self.config.model_name or "gpt-4o",
-            tools=self.config.tools,
-            model_settings=self.config.model_settings,
-            # NO output_type - returns free-form text
+        # LLM Call
+        accumulated = ""
+        token_buffer = ""
+        last_partial_dict = None
+        current_turn_tool_calls: list[dict[str, Any]] = []  # tool calls for current assistant turn
+        current_turn_has_outputs: bool = False  # whether any tool_output seen for current turn
+        with trace(class_name):
+            stream = Runner.run_streamed(
+                self._agent,
+                input=self._to_runner_input(messages),
+                run_config=self.config.run_config,
+            )
+
+            async for event in stream.stream_events():
+                if self.debug:
+                    if isinstance(event, RawResponsesStreamEvent):
+                        logger.debug(f"[{class_name}] RawEvent: {getattr(event.data, 'type', 'unknown')}")
+                    elif isinstance(event, RunItemStreamEvent):
+                        logger.debug(f"[{class_name}] RunItemEvent: {event.name}")
+
+                if isinstance(event, RawResponsesStreamEvent):
+                    event_type = getattr(event.data, "type", "")
+
+                    if event_type == "response.output_text.delta":
+                        delta = getattr(event.data, "delta", "") or ""
+                        token_buffer += delta
+                        accumulated += delta
+                        if len(token_buffer) >= token_batch_size:
+                            # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                            yield StreamingTokenEvent(
+                                source=class_name,
+                                message=f"Streaming {class_name}",
+                                data=StreamingEventData(token=token_buffer),
+                                run_context=run_context,
+                            )
+
+                            token_buffer = ""
+
+                        parsed = self._try_parse_json(accumulated)
+                        if parsed and parsed != last_partial_dict:
+                            last_partial_dict = parsed
+                            try:
+                                partial = PartialResponseModel.model_validate(parsed)
+                                yield PartialOutputEvent(
+                                    source=class_name,
+                                    message="Partial...",
+                                    data=PartialEventData(partial_output=partial),
+                                    run_context=run_context,
+                                )
+                            except Exception:
+                                pass
+
+                    elif event_type == "response.output_text.done":
+                        # ResponseTextDoneEvent.text has the complete text for this output part
+                        done_text = getattr(event.data, "text", "") or ""
+                        if done_text and not accumulated:
+                            accumulated = done_text
+                        if token_buffer:
+                            yield StreamingTokenEvent(
+                                source=class_name,
+                                message=f"Streaming {class_name}",
+                                data=StreamingEventData(token=token_buffer),
+                                run_context=run_context,
+                            )
+                            token_buffer = ""
+
+                    elif "reasoning" in event_type:
+                        content = getattr(event.data, "content", "") or getattr(event.data, "delta", "") or ""
+                        if content:
+                            yield ThinkingEvent(
+                                source=class_name,
+                                message="Reasoning...",
+                                data=ThinkingEventData(thinking_content=content),
+                                run_context=run_context,
+                            )
+                            # yield {"type": StreamEventType.THINKING, "content": content}
+
+                elif isinstance(event, RunItemStreamEvent):
+                    if event.name == "tool_called":
+                        raw_item = getattr(event.item, "raw_item", None)
+                        if raw_item:
+                            tool_name = getattr(raw_item, "name", "")
+                            tool_input_raw = getattr(raw_item, "arguments", "{}")
+                            tool_input = (
+                                json.loads(tool_input_raw) if isinstance(tool_input_raw, str) else tool_input_raw
+                            )
+                            tool_call_id = getattr(raw_item, "call_id", None) or getattr(
+                                raw_item, "id", uuid.uuid4().hex[:8]
+                            )
+
+                            # Turn boundary: new tool_called after previous turn's outputs → reset
+                            if current_turn_has_outputs:
+                                current_turn_tool_calls = []
+                                current_turn_has_outputs = False
+
+                            current_turn_tool_calls.append(
+                                {
+                                    "id": tool_call_id,
+                                    "type": "function",
+                                    "function": {"name": tool_name, "arguments": tool_input},
+                                }
+                            )
+                            yield ToolCallingEvent(
+                                source=class_name,
+                                message=f"Calling tool: {tool_name}",
+                                data=ToolCallingEventData(
+                                    tool_call=ToolCall(
+                                        tool_call_id=tool_call_id,
+                                        tool_name=tool_name,
+                                        arguments=tool_input,
+                                    )
+                                ),
+                                run_context=run_context,
+                            )
+
+                            # HostedMCPTool: server-side execution, output on the raw_item itself
+                            if getattr(raw_item, "type", "") == "mcp_call":
+                                mcp_output = getattr(raw_item, "output", None)
+                                if mcp_output is not None:
+                                    if not current_turn_has_outputs and current_turn_tool_calls:
+                                        messages.append(
+                                            {
+                                                "role": "assistant",
+                                                "content": None,
+                                                "tool_calls": list(current_turn_tool_calls),
+                                            }
+                                        )
+                                        current_turn_has_outputs = True
+
+                                    serialized = mcp_output if isinstance(mcp_output, str) else json.dumps(mcp_output)
+                                    messages.append(
+                                        {"role": "tool", "tool_call_id": tool_call_id, "content": serialized}
+                                    )
+                                    yield ToolResultEvent(
+                                        source=class_name,
+                                        message="Tool result",
+                                        data=ToolResultEventData(
+                                            result=ToolResult(
+                                                tool_call_id=tool_call_id,
+                                                tool_name=tool_name,
+                                                content=mcp_output,
+                                            )
+                                        ),
+                                        run_context=run_context,
+                                    )
+
+                            if tool_name == "ask_human":
+                                try:
+                                    human_input = HumanToolInput(**tool_input)
+                                except Exception:
+                                    human_input = HumanToolInput(question=tool_input.get("question", "Input needed"))
+
+                                # Flush current turn's assistant message for resumption
+                                messages.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": None,
+                                        "tool_calls": list(current_turn_tool_calls),
+                                    }
+                                )
+                                run_context.messages = list(messages)
+                                # Cancel the Runner to prevent background tool execution and retry loop
+                                stream.cancel()
+                                yield HumanInputRequiredEvent(
+                                    source=class_name,
+                                    message=f"Human input required: {tool_input.get('question', 'Input needed')}",
+                                    data=HumanInputRequiredEventData(
+                                        human_input=human_input,
+                                        tool_call_id=tool_call_id,
+                                        tool_name=tool_name,
+                                    ),
+                                    run_context=run_context,
+                                )
+                                return
+
+                    elif event.name == "tool_output":
+                        raw_item = getattr(event.item, "raw_item", None)
+                        tool_output_content = getattr(event.item, "output", None)
+                        tool_call_id = (
+                            raw_item.get("call_id", "")
+                            if isinstance(raw_item, dict)
+                            else getattr(raw_item, "call_id", "")
+                        ) or uuid.uuid4().hex[:8]
+                        if tool_output_content is not None:
+                            # Flush assistant message on first tool_output (correct ordering)
+                            if not current_turn_has_outputs and current_turn_tool_calls:
+                                messages.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": None,
+                                        "tool_calls": list(current_turn_tool_calls),
+                                    }
+                                )
+                                current_turn_has_outputs = True
+
+                            # Append tool result message
+                            serialized = (
+                                tool_output_content
+                                if isinstance(tool_output_content, str)
+                                else json.dumps(tool_output_content)
+                            )
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_call_id,
+                                    "content": serialized,
+                                }
+                            )
+
+                            yield ToolResultEvent(
+                                source=class_name,
+                                message="Tool result",
+                                data=ToolResultEventData(
+                                    result=ToolResult(
+                                        tool_call_id=tool_call_id,
+                                        tool_name=getattr(raw_item, "name", "unknown"),
+                                        content=tool_output_content,
+                                    )
+                                ),
+                                run_context=run_context,
+                            )
+
+                    elif event.name == "message_output_created":
+                        if token_buffer:
+                            yield StreamingTokenEvent(
+                                source=class_name,
+                                message=f"Streaming {class_name}",
+                                data=StreamingEventData(token=token_buffer),
+                                run_context=run_context,
+                            )
+                            # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                            token_buffer = ""
+
+            if self.debug:
+                logger.debug(
+                    f"[{class_name}] accumulated={len(accumulated)} chars, "
+                    f"stream.final_output={type(stream.final_output).__name__}"
+                )
+
+            if issubclass(self.output_schema, TextOutput):
+                content = accumulated
+                if not content and isinstance(stream.final_output, str):
+                    content = stream.final_output
+                final_output = self.output_schema(content=content)
+            else:
+                final_output = stream.final_output_as(self.output_schema, raise_if_incorrect_type=False)
+
+            if final_output:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": accumulated or None,
+                    }
+                )
+                yield CompletedEvent(
+                    source=class_name,
+                    message=f"Completed {class_name}",
+                    data=CompletedEventData[self.output_schema](output=final_output),
+                    run_context=run_context,
+                )
+                # yield {"type": StreamEventType.COMPLETED, "output": final_output}
+
+            # TODO: Check how to add reflection_prompt to the Runner after the output is generated.
+
+    async def _astream(
+        self,
+        params: InSchema,
+        run_context: RunContext | None = None,
+        token_batch_size: int = 10,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream execution with akd StreamEvent format."""
+
+        class_name = self.__class__.__name__
+        run_context: RunContext = (run_context or RunContext()).model_copy()
+        run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
+
+        yield StartingEvent(
+            source=class_name,
+            message=f"Starting {class_name}",
+            data=StartingEventData[self.input_schema](params=params),
+            run_context=run_context,
         )
 
-    async def _arun(self, params: InSchema, **kwargs) -> FreeFormOutput:
-        """Run agent and wrap string response in FreeFormOutput."""
-        if self.config.stateless:
-            self.reset_memory()
+        try:
+            async with self.memory.asession(
+                stateless=self.stateless,
+                run_context=run_context,
+                enable_trimming=self.enable_trimming,
+                model_name=self.model_name,
+                max_tokens=self.max_tokens,
+                trim_ratio=self.trim_ratio,
+            ) as messages:
+                # Add system message if empty
+                if not messages:
+                    messages.append(self._default_system_message())
 
-        self._memory.append({"role": "user", "content": params.model_dump_json()})
-        result = await self.get_response_async(messages=self._memory)
-        self._memory = result.to_input_list()
+                # because human response run context messages handled by _stream_llm_response
+                if params and not (run_context and run_context.human_response):
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": params.model_dump_json(exclude={"type"}),
+                        },
+                    )
 
-        # Wrap string response in output schema
-        response_text = str(result.final_output)
-        return self.output_schema(response=response_text)
+                yield RunningEvent(
+                    source=class_name,
+                    message=f"Running {class_name}",
+                    run_context=run_context,
+                )
+
+                final_output = None
+                # interact with the LLM and yield events
+                async for event in self._stream_llm_response(
+                    messages=messages, run_context=run_context, token_batch_size=token_batch_size
+                ):
+                    if isinstance(event, CompletedEvent):
+                        final_output = event.data.output
+                    yield event
+                    if isinstance(event, HumanInputRequiredEvent):
+                        # ask the human for input and interrupt the stream
+                        return
+
+                if final_output is None:
+                    raise UnexpectedModelBehavior("No output received from LLM")
+
+        except Exception as e:
+            yield FailedEvent(
+                source=class_name,
+                message=f"Failed: {e!s}",
+                data=FailedEventData(error=str(e), error_type=type(e).__name__),
+                run_context=run_context,
+            )
+            raise
+
+    # TODO: check if this is need at all
+    async def astream(
+        self,
+        params: Any,
+        run_context: RunContext | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamEvent]:
+        """
+        Overriding the BaseAgent astream to include possible return formats from OpenAI SDK
+        """
+        # Input validation (before any events are yielded)
+        params = self._validate_input(params)
+
+        # Stream from internal implementation
+        async for event in self._astream(params, run_context, **kwargs):
+            if event.event_type == StreamEventType.COMPLETED:
+                # Validate output before yielding COMPLETED
+                event_output = event.output
+                response_model = self.output_schema
+                output: response_model | None = None
+
+                # possible return formats from OpenAI SDK result
+                if isinstance(event_output, response_model):
+                    output = event_output
+                elif isinstance(event_output, str):
+                    output = response_model.model_validate_json(event_output)
+                else:
+                    output = response_model.model_validate(event_output)
+
+                if output is not None:
+                    output = self._validate_output(output)
+                    yield CompletedEvent(
+                        source=event.source,
+                        message=event.message,
+                        data=CompletedEventData(output=output),
+                        run_context=event.run_context,
+                    )
+                    continue
+            yield event
