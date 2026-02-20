@@ -742,7 +742,8 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
             # try to exit the current trace.
             try:
                 current_trace.__exit__(None, None, None)
-            except (ValueError, RuntimeError):
+            except (ValueError, RuntimeError) as err:
+                logger.warning(str(err))
                 pass
 
     async def _astream(
