@@ -1,14 +1,15 @@
-import os
 import asyncio
-from pydantic import Field, model_validator
+import os
 from urllib.parse import urlparse
-from loguru import logger
 
+from loguru import logger
+from pydantic import AnyUrl, BaseModel, Field
+from akd.tools import BaseTool
 from akd.tools.search.code_search import (
-    SDECodeSearchTool,
-    SDECodeSearchToolConfig,
     CodeSearchToolInputSchema,
     CodeSearchToolOutputSchema,
+    SDECodeSearchTool,
+    SDECodeSearchToolConfig,
 )
 from akd.structures import SearchResultItem
 
@@ -16,11 +17,13 @@ from akd_ext.mcp import mcp_tool
 from .utils import RepositoryMetadata, fetch_github_metadata, calculate_reliability_score
 
 
-class RepositorySearchResultItem(SearchResultItem):
+class RepositorySearchResultItem(BaseModel):
     """
-    Search result item with added github repository metadata and computed reliability score.
+    Repository search result item.
     """
 
+    url: AnyUrl = Field(..., description="Repository URL.")
+    full_text: str = Field(..., description="SDE-indexed repository README/content text.")
     reliability_score: float | None = Field(
         default=None,
         description="Computed reliability score based on github repository metadata. If none, treat it neutrally as if there is no reliability score.",
@@ -30,19 +33,6 @@ class RepositorySearchResultItem(SearchResultItem):
         description="Github repository metadata. includes number of stars, forks, open issues, open pull requests, and closed pull requests.",
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def convert_parent_instance(cls, data):
-        """
-        While we call super()._arun(params), the parent pydantic validation runs on the parents output schema.
-        The data of the parent instance is SearchResultItem. However, the data of this cls is RepositorySearchResultItem.
-        To avoid this pydantic validation inconsistency on results, we need to return the model dump of the parent instance.
-        TODO: fix this issue in the core
-        """
-        if isinstance(data, SearchResultItem) and not isinstance(data, cls):
-            return data.model_dump()
-        return data
-
 
 # Tool input and output schemas
 class RepositorySearchToolInputSchema(CodeSearchToolInputSchema):
@@ -51,14 +41,14 @@ class RepositorySearchToolInputSchema(CodeSearchToolInputSchema):
     """
 
 
-class RepositorySearchToolOutputSchema(CodeSearchToolOutputSchema):
+class RepositorySearchToolOutputSchema(BaseModel):
     """
     Output schema for the repository search tool.
     """
 
     results: list[RepositorySearchResultItem] = Field(
         ...,
-        description="List of search result items with added github repository metadata and computed reliability score.",
+        description="List of repository search items.",
     )
 
 
@@ -73,7 +63,7 @@ class RepositorySearchToolConfig(SDECodeSearchToolConfig):
 
 # Tool implementation
 @mcp_tool
-class RepositorySearchTool(SDECodeSearchTool):
+class RepositorySearchTool(BaseTool[RepositorySearchToolInputSchema, RepositorySearchToolOutputSchema]):
     """
     Search for relevant code and implementations within specialized science repositories.
 
@@ -99,34 +89,57 @@ class RepositorySearchTool(SDECodeSearchTool):
     config_schema = RepositorySearchToolConfig
 
     async def _arun(self, params: RepositorySearchToolInputSchema) -> RepositorySearchToolOutputSchema:
-        search_result: CodeSearchToolOutputSchema = await super()._arun(params)
+        sde_tool = SDECodeSearchTool(config=self._build_sde_config())
+        search_result: CodeSearchToolOutputSchema = await sde_tool.arun(params)
         tasks: list[asyncio.Task] = [
             self._enrich_code_search_with_metadata(repository_item) for repository_item in search_result.results
         ]
         enriched_results: list[RepositorySearchResultItem] = await asyncio.gather(*tasks)
         repository_search_result: RepositorySearchToolOutputSchema = RepositorySearchToolOutputSchema(
-            results=enriched_results, extra=search_result.extra
+            results=enriched_results
         )
         return repository_search_result
 
     async def _enrich_code_search_with_metadata(self, repository_item: SearchResultItem) -> RepositorySearchResultItem:
-        url: str = str(repository_item.url)
-        if not url:
-            return RepositorySearchResultItem(**repository_item.model_dump())
-        # Parse URL to extract owner/repo from github url
-        parsed_url = urlparse(url)
-        path_parts = parsed_url.path.strip("/").split("/")
-        owner, repo = path_parts[0], path_parts[1]
-        repo_name = f"{owner}/{repo}"
-        repository_metadata: RepositoryMetadata = await fetch_github_metadata(repo_name, self.config.access_token)
-        reliability_score: float | None = calculate_reliability_score(repository_metadata)
+        repository_metadata: RepositoryMetadata = RepositoryMetadata()
+        reliability_score: float | None = None
+        repo_name = self._extract_repo_name(str(repository_item.url))
+        if repo_name:
+            repository_metadata = await fetch_github_metadata(repo_name, self.config.access_token)
+            reliability_score = calculate_reliability_score(repository_metadata)
+
         return RepositorySearchResultItem(
-            **{
-                **repository_item.model_dump(),
-                "repository_metadata": repository_metadata,
-                "reliability_score": reliability_score,
-            }
+            url=repository_item.url,
+            full_text=repository_item.content or "",
+            repository_metadata=repository_metadata,
+            reliability_score=reliability_score,
         )
+
+    def _build_sde_config(self) -> SDECodeSearchToolConfig:
+        return SDECodeSearchToolConfig(
+            base_url=self.config.base_url,
+            page_size=self.config.page_size,
+            max_pages=self.config.max_pages,
+            headers=self.config.headers,
+            debug=self.config.debug,
+            search_mode=self.config.search_mode,
+        )
+
+    def _extract_repo_name(self, url: str) -> str | None:
+        if not url:
+            return None
+        parsed_url = urlparse(url)
+        host = parsed_url.netloc.lower()
+        if host not in {"github.com", "www.github.com"}:
+            return None
+        path_parts = [part for part in parsed_url.path.strip("/").split("/") if part]
+        if len(path_parts) < 2:
+            return None
+        owner = path_parts[0]
+        repo = path_parts[1].removesuffix(".git")
+        if not owner or not repo:
+            return None
+        return f"{owner}/{repo}"
 
 
 if __name__ == "__main__":

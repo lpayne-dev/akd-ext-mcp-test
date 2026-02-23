@@ -32,10 +32,15 @@ class TestRepositorySearchTool:
         assert isinstance(result, RepositorySearchToolOutputSchema)
         assert len(result.results) > 0
 
-        # Verify each result has repository metadata and reliability score
+        # Verify each result uses strict minified schema.
         for item in result.results:
-            assert hasattr(item, "repository_metadata")
-            assert hasattr(item, "reliability_score")
+            item_data = item.model_dump()
+            assert set(item_data.keys()) == {"url", "full_text", "reliability_score", "repository_metadata"}
+            assert "title" not in item_data
+            assert "query" not in item_data
+            assert "content" not in item_data
+            assert "extra" not in item_data
+            assert isinstance(item.full_text, str)
             assert item.repository_metadata.stars >= 0
             assert item.repository_metadata.forks >= 0
 
