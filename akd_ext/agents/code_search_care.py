@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Any, Literal
 
-from agents import HostedMCPTool, WebSearchTool, function_tool
+from agents import HostedMCPTool, WebSearchTool
 from pydantic import Field, BaseModel
 
 from akd_ext._types import OpenAITool
@@ -26,8 +26,6 @@ from akd_ext.agents._base import (
     OpenAIBaseAgentConfig,
 )
 
-from akd.tools import HumanTool
-from akd_ext.mcp.converter import tool_converter
 
 # -----------------------------------------------------------------------------
 # System Prompts
@@ -215,7 +213,6 @@ def get_default_code_search_tools() -> list[OpenAITool]:
             }
         ),
         WebSearchTool(),
-        function_tool(tool_converter(HumanTool())),
     ]
 
 
