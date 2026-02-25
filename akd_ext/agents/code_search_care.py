@@ -86,8 +86,6 @@ CODE_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """
   No implication of legality, safety, certification, or fitness for use.
 
   PROCESS
-  (you are currently in benchmark mode: the provided queries are self sufficient and does not need human approval (already human verified))
-
   You must follow all steps in order. No step may be skipped.
 
   Step 1 — Intent Interpretation
