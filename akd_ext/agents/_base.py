@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from agents import (
     Agent,
@@ -71,6 +71,11 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
     Defaults to `stateless=False` (stateful) for multi-turn conversations.
     """
 
+    output_mode: Literal["multi_tool", "unified_schema"] = Field(
+        default="unified_schema",
+        description="Output mode for union schemas. unified_schema (default) uses response_format envelope; "
+        "multi_tool uses one final tool per schema branch.",
+    )
     model_name: str = Field(
         default="gpt-5-nano",
         description="Model name for the agent.",
