@@ -10,6 +10,7 @@ from agents import (
     ModelSettings,
     RunConfig,
     Runner,
+    ToolsToFinalOutputResult,
     function_tool,
     trace,
 )
@@ -204,7 +205,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
             )
 
         if self.output_mode == "unified_schema":
-            envelope = self._get_effective_output_schema()
+            envelope = self.effective_output_schema
             return Agent(
                 name=self.__class__.__name__,
                 instructions=self.config.system_prompt,
@@ -217,7 +218,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
         # multi_tool mode: use mode="json" so the SDK gets a valid JSON string
         # (not str(dict) which produces Python repr with single quotes)
         sdk_output_tools = [function_tool(t.as_function(mode="json")) for t in self.output_tools]
-        output_tool_names = [t.name for t in self.output_tools]
         all_tools = list(self.config.tools) + sdk_output_tools
         return Agent(
             name=self.__class__.__name__,
@@ -226,8 +226,25 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
             tools=all_tools,
             output_type=None,
             model_settings=self.config.model_settings,
-            tool_use_behavior={"stop_at_tool_names": output_tool_names},
+            tool_use_behavior=self._output_tool_behavior,
         )
+
+    async def _output_tool_behavior(self, _ctx, results) -> ToolsToFinalOutputResult:
+        """SDK tool_use_behavior callback: validate output tools via check_output.
+
+        Adapts SDK's FunctionToolResult to akd-core ToolResult, then reuses
+        the mixin's _resolve_output_tool_result + check_output.
+        """
+        output_names = {t.name for t in self.output_tools}
+        for r in results:
+            if r.tool.name not in output_names:
+                continue
+            adapted = ToolResult(tool_call_id="", tool_name=r.tool.name, content=r.output)
+            parsed = self._resolve_output_tool_result(adapted)
+            if parsed is not None and self.check_output(parsed) is None:
+                return ToolsToFinalOutputResult(is_final_output=True, final_output=r.output)
+            return ToolsToFinalOutputResult(is_final_output=False)
+        return ToolsToFinalOutputResult(is_final_output=False)
 
     # ── Message format converters ────────────────────────────────────
 
@@ -506,7 +523,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
         partial_model = None
         if len(self.output_schema_resolved) > 1:
             if self.output_mode == "unified_schema":
-                partial_model = PartialModel[self._get_effective_output_schema()]
+                partial_model = PartialModel[self.effective_output_schema]
         else:
             partial_model = PartialModel[self.output_schema]
 

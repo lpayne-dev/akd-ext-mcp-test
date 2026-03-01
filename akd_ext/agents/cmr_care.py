@@ -477,6 +477,11 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
     output_schema = CMRCareAgentOutputSchema | TextOutput
     config_schema = CMRCareConfig
 
+    def check_output(self, output) -> str | None:
+        if isinstance(output, CMRCareAgentOutputSchema) and not output.report.strip():
+            return "Report is empty. Provide search reasoning and details."
+        return super().check_output(output)
+
 
 if __name__ == "__main__":
     import asyncio

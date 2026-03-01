@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 from pydantic import Field
 
-from akd._base import InputSchema, OutputSchema
+from akd._base import InputSchema, OutputSchema, TextOutput
 from akd_ext.agents._base import OpenAIBaseAgent, OpenAIBaseAgentConfig
 
 
@@ -114,15 +114,18 @@ def test_union_unified_creates_agent_with_envelope():
     assert "OutputB" in envelope.model_fields
 
 
-def test_union_multi_tool_stop_at_tools():
-    """Union multi_tool agent sets tool_use_behavior with stop_at_tool_names."""
-    config = OpenAIBaseAgentConfig(output_mode="multi_tool")
-    agent = UnionMultiToolAgent(config=config)
-    behavior = agent._agent.tool_use_behavior
-    assert behavior is not None
-    stop_names = behavior.get("stop_at_tool_names", [])
-    assert "final_OutputA" in stop_names
-    assert "final_OutputB" in stop_names
+def test_check_output_accepts_valid():
+    """check_output accepts valid output by default."""
+    agent = UnionMultiToolAgent()
+    assert agent.check_output(OutputA(answer="hello")) is None
+    assert agent.check_output(OutputB(items=["a", "b"])) is None
+
+
+def test_check_output_rejects_empty_text():
+    """check_output rejects empty TextOutput."""
+    agent = SingleSchemaAgent()
+    assert agent.check_output(TextOutput(content="")) is not None
+    assert agent.check_output(TextOutput(content="   ")) is not None
 
 
 # ── Tests: output_tools from mixin ───────────────────────────────────
@@ -184,7 +187,7 @@ def test_resolve_unified_envelope():
     """Resolves unified envelope by unwrapping to concrete branch."""
     config = OpenAIBaseAgentConfig(output_mode="unified_schema")
     agent = UnionUnifiedAgent(config=config)
-    envelope_cls = agent._get_effective_output_schema()
+    envelope_cls = agent.effective_output_schema
     envelope = envelope_cls(kind="OutputA", OutputA=OutputA(answer="test"), OutputB=None)
     result = agent._resolve_final_output(envelope)
     assert isinstance(result, OutputA)
