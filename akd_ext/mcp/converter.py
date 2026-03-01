@@ -6,6 +6,7 @@ from typing import Annotated, Awaitable, Any
 
 from pydantic import Field as PydanticField
 from pydantic.fields import FieldInfo
+from pydantic_core import PydanticUndefined
 from fastmcp import FastMCP
 from akd.tools._base import BaseTool
 
@@ -72,7 +73,7 @@ def tool_converter(tool: BaseTool) -> Callable[..., Awaitable[Any]]:
         field_type = _build_annotated_type(field)
         annotations[field_name] = field_type
 
-        if field.default is not ...:
+        if field.default is not PydanticUndefined:
             param = Parameter(field_name, Parameter.POSITIONAL_OR_KEYWORD, default=field.default, annotation=field_type)
         else:
             param = Parameter(field_name, Parameter.POSITIONAL_OR_KEYWORD, annotation=field_type)
