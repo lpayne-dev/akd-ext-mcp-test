@@ -214,8 +214,9 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
                 model_settings=self.config.model_settings,
             )
 
-        # multi_tool mode: convert OutputTools from mixin to OpenAI SDK FunctionTools at call site
-        sdk_output_tools = [function_tool(tool_converter(t)) for t in self.output_tools]
+        # multi_tool mode: use mode="json" so the SDK gets a valid JSON string
+        # (not str(dict) which produces Python repr with single quotes)
+        sdk_output_tools = [function_tool(t.as_function(mode="json")) for t in self.output_tools]
         output_tool_names = [t.name for t in self.output_tools]
         all_tools = list(self.config.tools) + sdk_output_tools
         return Agent(
@@ -462,17 +463,16 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
                 except Exception:
                     continue
 
-        # Raw string fallback: if TextOutput is a union branch and model returned plain text,
-        # wrap it as TextOutput (e.g., clarification questions, intermediate responses)
+        # Raw string fallback: try JSON parsing first, then TextOutput for plain text
         if isinstance(final_output, str):
+            for schema in schemas:
+                try:
+                    return cast(OutSchema, schema.model_validate_json(final_output))
+                except Exception:
+                    continue
             text_schemas = [s for s in schemas if issubclass(s, TextOutput)]
             if text_schemas:
                 return cast(OutSchema, text_schemas[0](content=final_output))
-            # Try JSON string parsing against first schema
-            try:
-                return cast(OutSchema, schemas[0].model_validate_json(final_output))
-            except Exception:
-                pass
 
         raise UnexpectedModelBehavior(f"Could not resolve output to any of: {[s.__name__ for s in schemas]}")
 

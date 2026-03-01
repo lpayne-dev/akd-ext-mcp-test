@@ -11,8 +11,8 @@ from akd_ext._types import AKDTool
 def tool_converter(tool: AKDTool) -> Callable[..., Awaitable[Any]]:
     """Convert AKDTool to FastMCP-compatible async function.
 
-    Wraps ``AKDTool.as_function()`` to return ``model_dump()`` dict,
-    which is what FastMCP expects from tool functions.
+    Uses ``AKDTool.as_function(mode="python")`` which returns
+    ``model_dump()`` dict — what FastMCP expects from tool functions.
 
     Args:
         tool: An instance of AKDTool to convert.
@@ -25,17 +25,7 @@ def tool_converter(tool: AKDTool) -> Callable[..., Awaitable[Any]]:
         mcp_func = tool_converter(tool)
         result = await mcp_func(query="hello")  # returns dict
     """
-    fn = tool.as_function()
-
-    async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        result = await fn(*args, **kwargs)
-        return result.model_dump()
-
-    wrapper.__name__ = fn.__name__
-    wrapper.__doc__ = fn.__doc__
-    wrapper.__signature__ = fn.__signature__
-    wrapper.__annotations__ = fn.__annotations__
-    return wrapper
+    return tool.as_function(mode="python")
 
 
 def register_mcp_tool(mcp_func: Callable[..., Awaitable[Any]], mcp: FastMCP) -> Callable[..., Awaitable[Any]]:
