@@ -521,7 +521,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
     async def _run_engine_stream(
         self,
         run_context: RunContext,
-        token_batch_size: int = 10,
+        **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         """OpenAI SDK streaming engine using Runner.run_streamed().
 
@@ -552,7 +552,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
 
         # LLM Call
         accumulated = ""
-        token_buffer = ""
         last_partial_dict = None
         current_turn_tool_calls: list[dict[str, Any]] = []
         current_turn_has_outputs: bool = False
@@ -577,16 +576,14 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
 
                     if event_type == "response.output_text.delta":
                         delta = getattr(event.data, "delta", "") or ""
-                        token_buffer += delta
                         accumulated += delta
-                        if len(token_buffer) >= token_batch_size:
+                        if delta:
                             yield StreamingTokenEvent(
                                 source=class_name,
                                 message=f"Streaming {class_name}",
-                                data=StreamingEventData(token=token_buffer),
+                                data=StreamingEventData(token=delta),
                                 run_context=run_context,
                             )
-                            token_buffer = ""
 
                         if partial_model is not None:
                             parsed = self._try_parse_json(accumulated)
@@ -607,14 +604,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
                         done_text = getattr(event.data, "text", "") or ""
                         if done_text and not accumulated:
                             accumulated = done_text
-                        if token_buffer:
-                            yield StreamingTokenEvent(
-                                source=class_name,
-                                message=f"Streaming {class_name}",
-                                data=StreamingEventData(token=token_buffer),
-                                run_context=run_context,
-                            )
-                            token_buffer = ""
 
                     elif "reasoning" in event_type:
                         content = getattr(event.data, "content", "") or getattr(event.data, "delta", "") or ""
@@ -768,16 +757,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
                                 ),
                                 run_context=run_context,
                             )
-
-                    elif event.name == "message_output_created":
-                        if token_buffer:
-                            yield StreamingTokenEvent(
-                                source=class_name,
-                                message=f"Streaming {class_name}",
-                                data=StreamingEventData(token=token_buffer),
-                                run_context=run_context,
-                            )
-                            token_buffer = ""
 
             run_context.usage += self._extract_usage(stream.raw_responses)
 
