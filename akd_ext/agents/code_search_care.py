@@ -20,6 +20,7 @@ from akd_ext._types import OpenAITool
 from akd._base import (
     InputSchema,
     OutputSchema,
+    TextOutput,
 )
 from akd_ext.agents._base import (
     OpenAIBaseAgent,
@@ -247,7 +248,7 @@ class CodeSearchCareAgent(OpenAIBaseAgent[CodeSearchCareAgentInputSchema, CodeSe
     """
 
     input_schema = CodeSearchCareAgentInputSchema
-    output_schema = CodeSearchCareAgentOutputSchema
+    output_schema = CodeSearchCareAgentOutputSchema | TextOutput
     config_schema = CodeSearchCareConfig
 
 
