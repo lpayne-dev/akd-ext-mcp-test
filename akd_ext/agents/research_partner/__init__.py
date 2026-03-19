@@ -1,26 +1,27 @@
-"""Agents module for akd_ext."""
+"""Research Partner agents module."""
 
-from akd_ext.agents._base import OpenAIBaseAgent, OpenAIBaseAgentConfig
-from akd_ext.agents.cmr_care import (
-    CMRCareAgent,
-    CMRCareAgentInputSchema,
-    CMRCareAgentOutputSchema,
-    CMRCareConfig,
-)
-
-from akd_ext.agents.research_partner import (
+from akd_ext.agents.research_partner.capability_feasibility_mapper import (
     CapabilityFeasibilityMapperAgent,
     CapabilityFeasibilityMapperConfig,
     CapabilityFeasibilityMapperInputSchema,
     CapabilityFeasibilityMapperOutputSchema,
+)
+
+from akd_ext.agents.research_partner.workflow_spec_builder import (
     WorkflowSpecBuilderAgent,
     WorkflowSpecBuilderConfig,
     WorkflowSpecBuilderInputSchema,
     WorkflowSpecBuilderOutputSchema,
+)
+
+from akd_ext.agents.research_partner.experiment_implementation import (
     ExperimentImplementationAgent,
     ExperimentImplementationConfig,
     ExperimentImplementationInputSchema,
     ExperimentImplementationOutputSchema,
+)
+
+from akd_ext.agents.research_partner.interpretation_paper_assembly import (
     InterpretationPaperAssemblyAgent,
     InterpretationPaperAssemblyConfig,
     InterpretationPaperAssemblyInputSchema,
@@ -28,12 +29,6 @@ from akd_ext.agents.research_partner import (
 )
 
 __all__ = [
-    "OpenAIBaseAgent",
-    "OpenAIBaseAgentConfig",
-    "CMRCareAgent",
-    "CMRCareAgentInputSchema",
-    "CMRCareAgentOutputSchema",
-    "CMRCareConfig",
     "CapabilityFeasibilityMapperAgent",
     "CapabilityFeasibilityMapperConfig",
     "CapabilityFeasibilityMapperInputSchema",
