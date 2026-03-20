@@ -541,14 +541,25 @@ class CapabilityFeasibilityMapperInputSchema(InputSchema):
     """Input schema for CARE Capability & Feasibility Mapper Agent."""
 
     # Global required inputs
-    research_questions_path: str = Field(..., description="Path to research questions file")
-    slurm_template_path: str = Field(..., description="Path to SLURM template")
-    cluster_it_pdf_path: str = Field(..., description="Path to cluster IT documentation PDF")
-    output_dir: str = Field(..., description="Output directory for the report")
+    research_questions_path: str = Field(
+        ..., description="Path to research questions file"
+    )  # it is a md string containing 1 research question
+    slurm_template_path: str = Field(..., description="Path to SLURM template")  # not needed
+    cluster_it_pdf_path: str = Field(
+        ..., description="Path to cluster IT documentation PDF"
+    )  # a constant thing. there is one pdf.
+    output_dir: str = Field(
+        ..., description="Output directory for the report"
+    )  # it is also a markdown with one report to the one research question
+    # just for sme to see and gate to next step
 
     # CM1 model required inputs (flat)
-    cm1_code_path: str = Field(..., description="Path to CM1 source code")
-    cm1_readme_path: str = Field(..., description="Path to CM1 README")
+    cm1_code_path: str = Field(..., description="Path to CM1 source code")  # not necessary for now.
+    cm1_readme_path: str = Field(
+        ..., description="Path to CM1 README"
+    )  # yes, needed. multiple files, namelist (important) and model
+
+    # none of these are needed
     cm1_notes_path: str = Field(..., description="Path to CM1 notes")
     cm1_sample_case_path: str = Field(..., description="Path to CM1 sample case")
     cm1_namelist_dir: str = Field(..., description="Path to CM1 namelist directory")
@@ -556,7 +567,7 @@ class CapabilityFeasibilityMapperInputSchema(InputSchema):
     cm1_run_script_path: str = Field(..., description="Path to CM1 run script")
     cm1_logs_dir: str = Field(..., description="Path to CM1 logs directory")
 
-    # Optional model blocks
+    # none for now. Optional model blocks
     wrf: dict[str, Any] | None = Field(default=None, description="Optional WRF model configuration")
     hwrf: dict[str, Any] | None = Field(default=None, description="Optional HWRF model configuration")
     olam: dict[str, Any] | None = Field(default=None, description="Optional OLAM model configuration")
@@ -568,7 +579,10 @@ class CapabilityFeasibilityMapperOutputSchema(OutputSchema):
     Use TextOutput for clarification questions or when inputs are missing."""
 
     __response_field__ = "report"
-    report: str = Field(default="", description="Full structured markdown feasibility assessment report")
+    report: str = Field(
+        default="",
+        description="Full structured markdown feasibility assessment report, to be seen by sme before proceeding",
+    )
 
 
 # -----------------------------------------------------------------------------

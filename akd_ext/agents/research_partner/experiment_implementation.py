@@ -458,8 +458,14 @@ class ExperimentImplementationConfig(OpenAIBaseAgentConfig):
 class ExperimentImplementationInputSchema(InputSchema):
     """Input schema for Experiment Implementation Agent."""
 
-    experiment_spec: str = Field(..., description="Previous-stage experiment design output (Stage-3 workflow spec)")
-    target_folder: str = Field(..., description="Target folder for the implementation package")
+    experiment_spec: str = Field(
+        ..., description="Previous-stage experiment design output (Stage-3 workflow spec)"
+    )  # needed
+    # the specs will have the experiments code, files, etc along with it. There will be subfolders for multiple experiemnts.
+    # target_folder: str = Field(..., description="Target folder for the implementation package") # not necessary
+
+    model_info_readme_context: str  # this is needed
+    research_question: str  # might be as a main context
 
 
 class ExperimentImplementationOutputSchema(OutputSchema):
@@ -473,6 +479,9 @@ class ExperimentImplementationOutputSchema(OutputSchema):
         default="",
         description="Implementation report describing workspace created, experiments implemented, and files generated",
     )
+    # all_data_files  # Any, running the cm1 models and outputting nc files and dat files, given by the cm1 models
+
+    # experiments runs by submitting slum jobs here.
 
 
 # -----------------------------------------------------------------------------

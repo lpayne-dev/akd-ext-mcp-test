@@ -438,16 +438,31 @@ class InterpretationPaperAssemblyConfig(OpenAIBaseAgentConfig):
 # Public Input/Output Schemas
 # -----------------------------------------------------------------------------
 
+# Steps
+# 1. generate md with analysis that is going to be performed
+# 2. notebooks for accepted ones
+# 3. run notebook and generate charts, and images
+# 4. interpreatation
+# 5. if results not promising or aligning, goto 2, repeat. #skip for demo purpose
+# 6. creating papers using the template.
+
 
 class InterpretationPaperAssemblyInputSchema(InputSchema):
     """Input schema for Interpretation & Paper Assembly Agent."""
 
-    research_question_path: str = Field(..., description="Path to research_question.md")
-    ctl_path: str = Field(..., description="Path to GrADS control file (.ctl)")
-    analysis_dir: str = Field(..., description="Output directory for generated artifacts")
+    research_question_path: str = Field(
+        ..., description="Path to research_question.md"
+    )  # can be actual query. now just 1 query
     figures_dir: str | None = Field(
         default=None, description="Optional path to figures directory; triggers report generation when provided"
-    )
+    )  # where it is going to save the images.
+
+    output_of_the_specs: str
+    # experiment_output: dir
+    # ctl_path: str = Field(..., description="Path to GrADS control file (.ctl)")
+    # analysis_dir: str = Field(..., description="Output directory for generated artifacts")
+
+    # notebook is created and statistics along with images are created, then that will be part of paper generation
 
 
 class InterpretationPaperAssemblyOutputSchema(OutputSchema):
@@ -461,6 +476,7 @@ class InterpretationPaperAssemblyOutputSchema(OutputSchema):
         description="Full report describing artifacts created (manifest, analysis plan, notebook, README, "
         "markdown report)",
     )
+    # actually creates notebook.
 
 
 # -----------------------------------------------------------------------------

@@ -202,13 +202,23 @@ class WorkflowSpecBuilderConfig(OpenAIBaseAgentConfig):
 class WorkflowSpecBuilderInputSchema(InputSchema):
     """Input schema for Workflow Spec Builder Agent."""
 
-    stage_1_hypotheses: str = Field(..., description="Stage-1 hypotheses artifact content")
-    stage_2_feasibility: str = Field(..., description="Stage-2 feasibility artifact content")
-    model_name: str = Field(..., description="Target model name (e.g., 'CM1' or 'WRF')")
-    model_path: str = Field(..., description="Path to the model")
+    research_question: str = Field("")  # the only one needed
+
+    stage_1_hypotheses: str = Field(..., description="Stage-1 hypotheses artifact content")  # yes, needed. input
+
+    # these are for the smes
+    stage_2_feasibility: str = Field(
+        ..., description="Stage-2 feasibility artifact content"
+    )  # not needed for input. its just for sme to gate.
+
     cm1_readme_path: str | None = Field(
         default=None, description="Optional CM1 README path for parameter semantics grounding"
-    )
+    )  # still needed, multiple files
+
+    model_name: str = Field(
+        ..., description="Target model name (e.g., 'CM1' or 'WRF')"
+    )  # constatant, necassary, put it hardcoded in
+    model_path: str = Field(..., description="Path to the model")  # ignore it
 
 
 class WorkflowSpecBuilderOutputSchema(OutputSchema):
@@ -217,10 +227,11 @@ class WorkflowSpecBuilderOutputSchema(OutputSchema):
     Use TextOutput for clarification questions or when inputs are insufficient."""
 
     __response_field__ = "spec"
-    spec: str = Field(default="", description="Full markdown workflow specification document")
+    spec: str = Field(default="", description="Full markdown workflow specification document")  # markdown file
     reasoning: str = Field(
         default="", description="Structured reasoning behind design choices, assumptions, and feasibility handling"
-    )
+    )  # inside the file
+    # output should be single speced markdown
 
 
 # -----------------------------------------------------------------------------
