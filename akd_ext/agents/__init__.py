@@ -16,7 +16,7 @@ from akd_ext.agents.gap import (
     GapAgentOutputSchema,
 )
 
-from akd_ext.agents.research_partner import (
+from akd_ext.agents.closed_loop_cm1 import (
     CapabilityFeasibilityMapperAgent,
     CapabilityFeasibilityMapperConfig,
     CapabilityFeasibilityMapperInputSchema,
@@ -29,6 +29,8 @@ from akd_ext.agents.research_partner import (
     ExperimentImplementationConfig,
     ExperimentImplementationInputSchema,
     ExperimentImplementationOutputSchema,
+    FileEdit,
+    ExperimentSpec,
     InterpretationPaperAssemblyAgent,
     InterpretationPaperAssemblyConfig,
     InterpretationPaperAssemblyInputSchema,
@@ -59,6 +61,8 @@ __all__ = [
     "ExperimentImplementationConfig",
     "ExperimentImplementationInputSchema",
     "ExperimentImplementationOutputSchema",
+    "FileEdit",
+    "ExperimentSpec",
     "InterpretationPaperAssemblyAgent",
     "InterpretationPaperAssemblyConfig",
     "InterpretationPaperAssemblyInputSchema",

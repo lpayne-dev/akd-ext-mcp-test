@@ -390,6 +390,7 @@ Report generation is triggered when `figures_dir` is provided.
 
 ## OUTPUT FORMAT
 
+When using markdown headings, always include a space after the # characters (e.g., "## 1. Section Title" not "##1. Section Title").
 The agent produces artifacts in the following order:
 
 1. **YAML Manifest**
@@ -421,7 +422,7 @@ class InterpretationPaperAssemblyConfig(OpenAIBaseAgentConfig):
     """Configuration for Interpretation & Paper Assembly Agent."""
 
     system_prompt: str = Field(default=INTERPRETATION_PAPER_ASSEMBLY_SYSTEM_PROMPT)
-    model_name: str = Field(default="gpt-5.2")
+    model_name: str = Field(default="gpt-5.4")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
 
 

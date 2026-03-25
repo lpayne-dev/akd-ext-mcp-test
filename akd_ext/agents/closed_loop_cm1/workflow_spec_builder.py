@@ -143,6 +143,7 @@ Follow this sequence every time:
    * Ask for approval rather than continuing to approval state automatically.
 
 **OUTPUT FORMAT**
+When using markdown headings, always include a space after the # characters (e.g., "## 1. Section Title" not "##1. Section Title").
 Return exactly **one Markdown workflow specification document** containing these sections in this exact order:
 
 1. `# Metadata`
@@ -173,7 +174,7 @@ class WorkflowSpecBuilderConfig(OpenAIBaseAgentConfig):
     """Configuration for Workflow Spec Builder Agent."""
 
     system_prompt: str = Field(default=WORKFLOW_SPEC_BUILDER_SYSTEM_PROMPT)
-    model_name: str = Field(default="gpt-5.2")
+    model_name: str = Field(default="gpt-5.4")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
 
 
@@ -185,28 +186,29 @@ class WorkflowSpecBuilderConfig(OpenAIBaseAgentConfig):
 class WorkflowSpecBuilderInputSchema(InputSchema):
     """Input schema for Workflow Spec Builder Agent."""
 
-    research_question: str = Field("", description="Research question content")  # the only one needed
-
-    stage_1_hypotheses: str = Field(..., description="Stage-1 hypotheses artifact content")  # yes, needed. input
-
-    cm1_readme_context: str | None = Field(
-        default=None, description="Extracted CM1 README content for parameter semantics grounding"
-    )  # still needed, multiple files
-
-    model_name: str = Field(
-        default="CM1", description="Target model name (e.g., 'CM1' or 'WRF')"
-    )  # constatant, necassary, put it hardcoded in
+    stage_1_hypotheses: str = Field(
+        ..., description="Gap Agent output — research hypotheses markdown with RQ IDs, variables, and causality guardrails."
+    )
+    stage_2_feasibility: str = Field(
+        ..., description="Stage-2 feasibility report from CapabilityFeasibilityMapperAgent with capability analysis and scoring."
+    )
+    cm1_readme: str = Field(
+        default="", description="CM1 model documentation including namelist reference and model capabilities."
+    )
 
 
 class WorkflowSpecBuilderOutputSchema(OutputSchema):
-    """Use this schema to return the workflow specification.
-    Put the full markdown workflow spec (including design reasoning) in the spec field.
+    """Use this schema to return the workflow specification and design reasoning.
+    Put the full markdown workflow spec in the spec field and design choices explanation in the reasoning field.
     Use TextOutput for clarification questions or when inputs are insufficient."""
 
     __response_field__ = "spec"
     spec: str = Field(
-        default="", description="Full markdown workflow specification document"
-    )  # output should be single speced markdown
+        default="", description="Full markdown workflow specification document."
+    )
+    reasoning: str = Field(
+        default="", description="Structured reasoning behind design choices, assumptions, and feasibility handling."
+    )
 
 
 # -----------------------------------------------------------------------------
