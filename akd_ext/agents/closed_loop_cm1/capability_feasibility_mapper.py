@@ -30,14 +30,6 @@ from akd_ext.agents._base import (
     OpenAIBaseAgentConfig,
 )
 
-# -----------------------------------------------------------------------------
-# Static context loaded from data files
-# -----------------------------------------------------------------------------
-
-_DATA_DIR = Path(__file__).parent / "context"
-CLUSTER_IT_CONTEXT = (_DATA_DIR / "cluster_it.md").read_text()
-CM1_README_CONTEXT = (_DATA_DIR / "cm1_readme.md").read_text()
-
 
 # -----------------------------------------------------------------------------
 # System Prompt
@@ -367,11 +359,11 @@ class CapabilityFeasibilityMapperConfig(OpenAIBaseAgentConfig):
 
     system_prompt: str = Field(default=CAPABILITY_FEASIBILITY_MAPPER_SYSTEM_PROMPT)
     cluster_it_context: str = Field(
-        default=CLUSTER_IT_CONTEXT,
+        default_factory=lambda: (Path(__file__).parent / "context" / "cluster_it.md").read_text(),
         description="Extracted text content from the Cluster IT infrastructure PDF describing available compute resources.",
     )
     cm1_readme_context: str = Field(
-        default=CM1_README_CONTEXT,
+        default_factory=lambda: (Path(__file__).parent / "context" / "cm1_readme.md").read_text(),
         description="CM1 model documentation including namelist reference and model capabilities. Content from static .txt file.",
     )
     model_name: str = Field(default="gpt-5.4")

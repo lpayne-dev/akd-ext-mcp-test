@@ -32,13 +32,6 @@ from akd_ext.agents._base import (
     OpenAIBaseAgentConfig,
 )
 
-# -----------------------------------------------------------------------------
-# Static context loaded from data files
-# -----------------------------------------------------------------------------
-
-_DATA_DIR = Path(__file__).parent / "context"
-CM1_README_CONTEXT = (_DATA_DIR / "cm1_readme.md").read_text()
-
 
 # -----------------------------------------------------------------------------
 # System Prompt
@@ -206,7 +199,7 @@ class ExperimentImplementationConfig(OpenAIBaseAgentConfig):
 
     system_prompt: str = Field(default=EXPERIMENT_IMPLEMENTER_SYSTEM_PROMPT)
     cm1_readme_context: str = Field(
-        default=CM1_README_CONTEXT,
+        default_factory=lambda: (Path(__file__).parent / "context" / "cm1_readme.md").read_text(),
         description="CM1 model documentation including namelist reference and model capabilities. Content from static .txt file.",
     )
     model_name: str = Field(default="gpt-5.4")
