@@ -36,7 +36,7 @@ from akd_ext.agents._base import (
 # Static context loaded from data files
 # -----------------------------------------------------------------------------
 
-_DATA_DIR = Path(__file__).parent / "data"
+_DATA_DIR = Path(__file__).parent / "context"
 CM1_README_CONTEXT = (_DATA_DIR / "cm1_readme.md").read_text()
 
 
