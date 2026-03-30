@@ -168,7 +168,7 @@ class GapAgentConfig(OpenAIBaseAgentConfig):
     """Configuration for the Gap Agent."""
 
     system_prompt: str = Field(default=GAP_AGENT_SYSTEM_PROMPT)
-    model_name: str = Field(default="gpt-5.4")
+    model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
 
 

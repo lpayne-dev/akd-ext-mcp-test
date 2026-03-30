@@ -438,7 +438,7 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
     """
 
     system_prompt: str = Field(default=CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT)
-    model_name: str = Field(default="gpt-5.4")
+    model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
     tools: list[Any] = Field(default_factory=get_default_cmr_tools)
 
