@@ -237,6 +237,7 @@ def get_default_report_tools() -> list[OpenAITool]:
                     "EXPERIMENT_STATUS_MCP_URL",
                     "",  # No default — must be configured
                 ),
+                "authorization": os.environ.get("EXPERIMENT_STATUS_MCP_KEY"),
             }
         ),
     ]
