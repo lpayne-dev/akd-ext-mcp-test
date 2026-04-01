@@ -208,7 +208,7 @@ class CodeSearchCareConfig(OpenAIBaseAgentConfig):
     description: str = Field(
         default="Scientific code repository discovery agent that searches NASA-verified repositories, "
         "Science Discovery Engine (SDE), and ADS to find publicly available code repositories relevant "
-        "to scientific and technical tasks using the CARE (Clarify, Analyze, Rank, Explain) process."
+        "to scientific and technical tasks."
     )
     system_prompt: str = Field(default=CODE_SEARCH_CARE_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
