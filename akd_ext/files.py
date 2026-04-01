@@ -76,7 +76,12 @@ class URLFileResolver:
                 {
                     "type": "input_image",
                     "image_url": f"data:{attachment.mime_type};base64,{encoded}",
-                }
+                },
+                # caption to the image.
+                {
+                    "type": "input_text",
+                    "text": f"caption to the image above: [Image: {attachment.filename}] (url: {attachment.url})",
+                },
             ]
 
         # Text-based files
