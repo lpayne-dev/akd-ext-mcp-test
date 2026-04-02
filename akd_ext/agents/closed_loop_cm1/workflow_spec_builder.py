@@ -186,7 +186,8 @@ class WorkflowSpecBuilderConfig(OpenAIBaseAgentConfig):
         default="Stage-3 experiment design agent that converts research questions into scientifically "
         "traceable, feasibility-aware simulation workflow specifications for CM1 or WRF. Proposes "
         "baseline plus perturbation experiments, parameter sweeps, and namelist changes as execution-ready "
-        "Markdown documents."
+        "Markdown documents. May also produce free-form text responses to chat with the user for "
+        "clarification, approval gates, or status updates."
     )
 
 

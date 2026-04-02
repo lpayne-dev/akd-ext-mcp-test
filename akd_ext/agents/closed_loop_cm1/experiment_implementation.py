@@ -230,7 +230,8 @@ class ExperimentImplementationConfig(OpenAIBaseAgentConfig):
         default="Stage-4A implementation planner that translates Stage-3 workflow specs into structured "
         "FileEdit JSON and submits experiment batches as jobs via MCP tool calls. Produces deterministic "
         "edit definitions (namelist_param, sounding_profile, file_replace) without directly creating files "
-        "or executing commands."
+        "or executing commands. May also produce free-form text responses to chat with the user for "
+        "clarification, approval gates, or status updates."
     )
 
 

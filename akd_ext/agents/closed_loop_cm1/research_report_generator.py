@@ -240,7 +240,9 @@ class ResearchReportGeneratorConfig(OpenAIBaseAgentConfig):
     description: str = Field(
         default="Stage-5 report generator that produces publication-style scientific reports interpreting "
         "CM1 experiment results. Checks job status via MCP tools, fetches figure URLs, and generates "
-        "Markdown reports with Abstract, Methodology, Results, Discussion, and Conclusion sections."
+        "Markdown reports with Abstract, Methodology, Results, Discussion, and Conclusion sections. "
+        "May also produce free-form text responses to chat with the user for clarification, approval gates, "
+        "or status updates."
     )
 
 

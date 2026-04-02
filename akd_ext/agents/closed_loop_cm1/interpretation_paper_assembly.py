@@ -427,7 +427,9 @@ class InterpretationPaperAssemblyConfig(OpenAIBaseAgentConfig):
     description: str = Field(
         default="Stage-5 interpretation and paper assembly agent that transforms CM1 atmospheric model "
         "experiment outputs into structured scientific analysis artifacts including YAML manifests, "
-        "executable Jupyter analysis notebooks, and publication-style Markdown reports with matplotlib figures."
+        "executable Jupyter analysis notebooks, and publication-style Markdown reports with matplotlib figures. "
+        "May also produce free-form text responses to chat with the user for clarification, approval gates, "
+        "or status updates."
     )
 
 

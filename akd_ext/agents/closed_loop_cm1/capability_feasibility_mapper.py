@@ -380,7 +380,8 @@ class CapabilityFeasibilityMapperConfig(OpenAIBaseAgentConfig):
         default="Research-analysis agent that evaluates whether research questions and hypotheses can be "
         "realistically tested using available numerical models (CM1, WRF, HWRF, OLAM), codebases, and "
         "cluster resources. Produces structured capability-feasibility assessment reports with evidence "
-        "paths and capability vs feasibility matrices."
+        "paths and capability vs feasibility matrices. May also produce free-form text responses to "
+        "chat with the user for clarification, approval gates, or status updates."
     )
 
 
