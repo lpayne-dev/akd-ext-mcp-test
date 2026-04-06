@@ -4,7 +4,9 @@ import pytest
 
 from akd_ext.mcp.registry import MCPToolRegistry
 from akd_ext.tools.pdf_parser import (
+    DoclingScraperConfig,
     PDFParserTool,
+    PDFParserToolConfig,
     PDFParserToolInputSchema,
     _normalize_url_or_path,
 )
@@ -12,10 +14,10 @@ from akd_ext.tools.pdf_parser import (
 
 @pytest.mark.asyncio
 async def test_pdf_parser_defaults_fast_to_akd_simple(monkeypatch):
-    tool = PDFParserTool()
+    tool = PDFParserTool(config=PDFParserToolConfig(akd_simple_config={"foo": "bar"}))
 
-    async def fake_simple(url_or_path):
-        return {"content": "simple", "metadata": {"source": url_or_path}}
+    async def fake_simple(url_or_path, config=None):
+        return {"content": "simple", "metadata": {"source": url_or_path, "config": config}}
 
     def fake_scraper_to_result(out):
         return out
@@ -32,14 +34,19 @@ async def test_pdf_parser_defaults_fast_to_akd_simple(monkeypatch):
 
     assert result.content == "simple"
     assert result.metadata["backend"] == "akd_simple"
+    assert result.metadata["config"] == {"foo": "bar"}
 
 
 @pytest.mark.asyncio
 async def test_pdf_parser_defaults_non_fast_to_akd_docling(monkeypatch):
-    tool = PDFParserTool()
+    tool = PDFParserTool(
+        config=PDFParserToolConfig(
+            akd_docling_config=DoclingScraperConfig(pdf_mode="accurate", do_table_structure=False, use_ocr=True)
+        )
+    )
 
-    async def fake_docling(url_or_path, mode):
-        return {"content": f"docling-{mode}", "metadata": {"source": url_or_path}}
+    async def fake_docling(url_or_path, mode, config=None):
+        return {"content": f"docling-{mode}", "metadata": {"source": url_or_path, "config": config}}
 
     def fake_scraper_to_result(out):
         return out
@@ -56,6 +63,8 @@ async def test_pdf_parser_defaults_non_fast_to_akd_docling(monkeypatch):
 
     assert result.content == "docling-accurate"
     assert result.metadata["backend"] == "akd_docling"
+    assert isinstance(result.metadata["config"], DoclingScraperConfig)
+    assert result.metadata["config"].use_ocr is True
 
 
 @pytest.mark.asyncio

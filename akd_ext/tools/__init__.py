@@ -22,6 +22,7 @@ from .code_search.repository_search import (
 )
 from .pdf_parser import (
     PDFParserTool,
+    PDFParserToolConfig,
     PDFParserToolInputSchema,
     PDFParserToolOutputSchema,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
     "PDFParserTool",
+    "PDFParserToolConfig",
     "PDFParserToolInputSchema",
     "PDFParserToolOutputSchema",
 ]

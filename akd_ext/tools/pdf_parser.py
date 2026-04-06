@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Literal
 from akd._base import InputSchema, OutputSchema
-from akd.tools import BaseTool
+from akd.tools import BaseTool, BaseToolConfig
 from akd.tools.scrapers import (
     DoclingScraper,
     DoclingScraperConfig,
@@ -44,6 +44,19 @@ class PDFParserToolOutputSchema(OutputSchema):
 
     content: str = Field(..., description="Parsed text content")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Parser and document metadata")
+
+
+class PDFParserToolConfig(BaseToolConfig):
+    """Configuration for PDF parser backend scrapers."""
+
+    akd_simple_config: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional configuration forwarded to SimplePDFScraper.",
+    )
+    akd_docling_config: DoclingScraperConfig | None = Field(
+        default=None,
+        description="Optional configuration forwarded to DoclingScraper.",
+    )
 
 
 def _normalize_url_or_path(url_or_path: str) -> str:
@@ -92,16 +105,30 @@ class PDFParserTool(BaseTool[PDFParserToolInputSchema, PDFParserToolOutputSchema
 
     input_schema = PDFParserToolInputSchema
     output_schema = PDFParserToolOutputSchema
+    config_schema = PDFParserToolConfig
 
     async def _arun(self, params: PDFParserToolInputSchema) -> PDFParserToolOutputSchema:
         backend = params.backend_hint
         if backend is None:
             backend = "akd_simple" if params.mode == "fast" else "akd_docling"
 
+        tool_config = self.config
+
         if backend == "akd_simple":
-            result = _scraper_to_result(await _run_akd_simple(params.url_or_path))
+            result = _scraper_to_result(
+                await _run_akd_simple(
+                    params.url_or_path,
+                    config=tool_config.akd_simple_config,
+                )
+            )
         elif backend == "akd_docling":
-            result = _scraper_to_result(await _run_akd_docling(params.url_or_path, params.mode))
+            result = _scraper_to_result(
+                await _run_akd_docling(
+                    params.url_or_path,
+                    params.mode,
+                    config=tool_config.akd_docling_config,
+                )
+            )
         else:
             raise ValueError(f"Unsupported backend: {backend!r}")
 
