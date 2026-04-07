@@ -17,7 +17,7 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "akd @ git+https://github.com/NASA-IMPACT/accelerated-discovery.git@develop",
+    "akd @ git+https://github.com/NASA-IMPACT/accelerated-discovery.git@874ce41c482a27ae59e9f59d627dd032e6466ccf ",
     "docling>=2.84.0",
     "fastmcp>=2.0.0",
     "openai-agents>=0.6.7",
