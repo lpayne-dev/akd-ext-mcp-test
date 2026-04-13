@@ -54,31 +54,44 @@ def register_tools_manually(tools: list[type[BaseTool]]) -> None:
 register_all_tools()
 # register_tools_manually(tools=[])  # Add tools here if needed
 
+
+def main(
+    transport: str | None = None,
+    host: str | None = None,
+    port: int | None = None,
+) -> None:
+    """Run the MCP server. Callable entrypoint for deploy tools."""
+    import os
+
+    resolved_transport = transport or os.getenv("MCP_TRANSPORT", "stdio")
+    resolved_host = host or os.getenv("MCP_HOST", "127.0.0.1")
+    resolved_port = port if port is not None else int(os.getenv("MCP_PORT", "8000"))
+
+    if resolved_transport == "sse":
+        mcp.run(transport="sse", host=resolved_host, port=resolved_port)
+    else:
+        mcp.run()
+
 if __name__ == "__main__":
     import argparse
-    import os
 
     parser = argparse.ArgumentParser(description="Run akd-ext MCP server")
     parser.add_argument(
         "--transport",
         choices=["stdio", "sse"],
-        default=os.getenv("MCP_TRANSPORT", "stdio"),
-        help="Transport type (default: stdio, or MCP_TRANSPORT env var)",
+        default=None,
+        help="Transport type (default: MCP_TRANSPORT env var or stdio)",
     )
     parser.add_argument(
         "--host",
-        default=os.getenv("MCP_HOST", "127.0.0.1"),
-        help="Host to bind to for SSE (default: 127.0.0.1)",
+        default=None,
+        help="Host to bind to for SSE (default: MCP_HOST env var or 127.0.0.1)",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("MCP_PORT", "8000")),
-        help="Port for SSE transport (default: 8000)",
+        default=None,
+        help="Port for SSE transport (default: MCP_PORT env var or 8000)",
     )
     args = parser.parse_args()
-
-    if args.transport == "sse":
-        mcp.run(transport="sse", host=args.host, port=args.port)
-    else:
-        mcp.run()
+    main(transport=args.transport, host=args.host, port=args.port)
